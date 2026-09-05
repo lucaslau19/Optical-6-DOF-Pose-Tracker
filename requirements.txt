@@ -1,0 +1,21 @@
+# Python 3.10+
+#
+# opencv-contrib-python, NOT opencv-python: cv2.aruco lives in the contrib
+# modules. Installing both puts two cv2 packages on the path and whichever
+# wins is undefined, so if you already have opencv-python:
+#
+#     pip uninstall -y opencv-python opencv-python-headless
+#
+# The >=4.10 floor is the important pin. The ArUco API was restructured in
+# 4.7 (ArucoDetector / CharucoDetector / new CharucoBoard constructor) and
+# cv2.aruco.estimatePoseSingleMarkers was REMOVED in 4.9. This project uses
+# the modern classes plus explicit cv2.solvePnP, so it needs >= 4.7; 4.10 is
+# the floor because CharucoBoard.matchImagePoints and CharucoDetector are
+# well-settled by then. The <5 ceiling guards against the next API break.
+#
+# Developed and verified against: opencv-contrib-python 4.14.0.94,
+# numpy 2.5.2, scipy 1.18.1, PyYAML 6.0.3, on Python 3.12.
+opencv-contrib-python>=4.10,<5
+numpy>=1.26,<3
+scipy>=1.11
+PyYAML>=6.0

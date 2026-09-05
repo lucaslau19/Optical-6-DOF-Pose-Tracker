@@ -1,0 +1,83 @@
+# =============================================================================
+# Optical 6-DOF Pose Tracker -- single configuration file
+#
+# UNITS: millimetres and degrees. Every length below is a REAL-WORLD PHYSICAL
+# measurement of your printed target. Pose accuracy is bounded by how well
+# these numbers match reality, so measure the print with calipers or a steel
+# rule and correct them -- consumer printers routinely scale by 1-4%, and a
+# 2% error in `square_length_mm` becomes a 2% error in every depth you report.
+# =============================================================================
+
+camera:
+  # 0 = default webcam. Virtual cameras (NVIDIA Broadcast, OBS, Teams effects)
+  # install themselves as extra indices, so index 0 is not always the real
+  # one. Run `python app.py check --list-cameras` to see which indices
+  # actually deliver frames.
+  device_index: 0
+  frame_width: 1280
+  frame_height: 720
+  fps: 30
+  # Where `app.py calibrate` writes the intrinsics, and where every other
+  # subcommand reads them from.
+  intrinsics_file: output/camera_intrinsics.yaml
+
+aruco:
+  # One dictionary shared by the calibration board and the tool markers.
+  # 5x5 = 5x5 bit payload: fewer bits than 6x6/7x7 means larger, more robust
+  # cells at the same printed size, which matters more than ID capacity when
+  # we only need a handful of distinct markers.
+  dictionary: DICT_5X5_100
+
+  # Sub-pixel corner refinement. This is the single most important detector
+  # setting for pose quality: without it corners land on integer pixels and
+  # the pose visibly jitters. CORNER_REFINE_SUBPIX runs a local quadratic fit;
+  # CORNER_REFINE_APRILTAG is slower but can be slightly better at an angle.
+  corner_refinement: CORNER_REFINE_SUBPIX
+
+charuco:
+  # A ChArUco board is a chessboard with ArUco markers in the white squares.
+  # The chessboard gives sub-pixel-accurate saddle-point corners (much better
+  # localisation than an ArUco corner), while the markers make every corner
+  # uniquely identifiable -- so unlike a plain chessboard it still works when
+  # the board is partly out of frame or occluded.
+  squares_x: 7 # squares across
+  squares_y: 5 # squares down
+  square_length_mm: 25.0 # MEASURE THIS on the print
+  marker_length_mm: 18.0 # MEASURE THIS on the print (must be < square_length)
+  # Board footprint at these values: 175.0 x 125.0 mm -> fits A4/Letter.
+
+  render_dpi: 300 # 300 dpi keeps the marker bits crisp on a laser printer
+  margin_mm: 12.0 # white quiet zone; the detector needs a border to find edges
+
+markers:
+  # Standalone single markers used by `app.py track` (Phase 1) and, later, as
+  # the elements of a rigid tool cluster.
+  marker_length_mm: 40.0 # side of the BLACK SQUARE, not including quiet zone
+  ids: [0, 1, 2, 3] # which IDs to generate print-ready PNGs for
+  render_dpi: 300
+  margin_mm: 10.0
+
+calibration:
+  # A view is only accepted if this many ChArUco corners were found. Views
+  # with few corners contribute little and can actively destabilise the
+  # distortion terms.
+  min_corners_per_view: 12
+  # Below this many views the intrinsics are under-constrained. Aim for 15-25
+  # views covering the whole image area at a variety of tilts -- especially
+  # the corners of the frame, which is where distortion is largest and where
+  # a board-in-the-middle-only dataset leaves the model unconstrained.
+  min_views: 12
+  # Captured frames are saved here so a calibration can be re-run or audited
+  # without re-shooting it.
+  images_dir: output/calib_frames
+  # Views whose per-view reprojection RMS exceeds this are reported as
+  # outliers (blurred, badly detected, or a mis-measured board).
+  outlier_rms_px: 1.0
+
+# --- Phases 2-4: placeholders, filled in as those phases land ---------------
+
+tool: {} # rigid marker-cluster geometry (Phase 2), tip offset (Phase 3)
+
+navigation: {} # reference marker ID, target definition (Phase 4)
+
+tolerances: {} # distance / angle tolerance bands for the HUD (Phase 4)
