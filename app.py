@@ -7,7 +7,7 @@
     python app.py track                # live single-marker 6-DOF pose
     python app.py generate-tool-sheet  # print-ready rigid-tool marker sheet
     python app.py track-tool           # live rigid-body tool pose (occlusion tolerant)
-    python app.py pivot                # (Phase 3) tool tip calibration
+    python app.py pivot                # pivot (tip) calibration -> tip offset
     python app.py navigate             # (Phase 4) reference frame + guidance
     python app.py accuracy             # (Phase 5) jitter + point accuracy
 
@@ -285,6 +285,65 @@ def cmd_track_tool(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# pivot   (Phase 3)
+# --------------------------------------------------------------------------
+
+
+def cmd_pivot(args: argparse.Namespace) -> int:
+    from calibration_pivot.capture import run_pivot_calibration
+    from calibration_pivot.solve import solve_pivot
+
+    cfg = _load(args)
+
+    if args.replay:
+        # Re-solve from previously captured poses. A calibration is a
+        # measurement; being able to re-run it without repeating the physical
+        # procedure is what makes it auditable.
+        import numpy as np
+
+        from calibration_pivot.tip import TipCalibration
+        from core.transforms import SE3
+        from markers.tool import load_tool_geometry
+
+        path = cfg.pivot.poses_file
+        if not path.is_file():
+            raise FileNotFoundError(f"No saved pivot poses at {path}. Run `pivot` first.")
+        data = np.load(path)
+        poses = [SE3(R, t) for R, t in zip(data["R"], data["t"])]
+        print(f"Re-solving from {len(poses)} saved poses in {path}\n")
+
+        geometry = load_tool_geometry(cfg)
+        saved_fp = str(data["tool_fingerprint"]) if "tool_fingerprint" in data else ""
+        if saved_fp and saved_fp != geometry.fingerprint():
+            print(
+                f"  WARNING: these poses were captured against tool geometry "
+                f"{saved_fp},\n  but config.yaml now describes "
+                f"{geometry.fingerprint()}. The tool frame has moved,\n"
+                "  so this re-solve does not describe your current tool.\n"
+            )
+
+        result = solve_pivot(poses)
+        print(result.report())
+
+        tip = TipCalibration(
+            p_tip=result.p_tip,
+            tool_name=geometry.name,
+            tool_fingerprint=geometry.fingerprint(),
+            residual_rms_mm=result.residual_rms_mm,
+            residual_max_mm=result.residual_max_mm,
+            n_frames=result.n_frames,
+            condition_number=result.condition_number,
+            cone_half_angle_deg=result.spread.cone_half_angle_deg,
+            metadata={"resolved_from": str(path)},
+        )
+        print(f"\nSaved tip calibration -> {tip.save(cfg.tool.tip_calibration_file)}")
+        return 0
+
+    result = run_pivot_calibration(cfg)
+    return 0 if result is not None else 1
+
+
+# --------------------------------------------------------------------------
 # not yet implemented
 # --------------------------------------------------------------------------
 
@@ -374,8 +433,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_tool.set_defaults(func=cmd_track_tool)
 
+    p_pivot = sub.add_parser(
+        "pivot",
+        help="pivot (tip) calibration: solve the tool tip offset by least squares",
+    )
+    p_pivot.add_argument(
+        "--replay",
+        action="store_true",
+        help="re-solve from the saved poses instead of capturing again",
+    )
+    p_pivot.set_defaults(func=cmd_pivot)
+
     for name, phase, desc in [
-        ("pivot", 3, "tip offset from a pivot rotation, solved as a least-squares system"),
         ("navigate", 4, "patient reference frame, target guidance and tolerance HUD"),
         ("accuracy", 5, "static jitter and point accuracy against known geometry"),
     ]:

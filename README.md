@@ -5,10 +5,10 @@ navigation system is built: calibrate the camera, track a rigid tool, calibrate
 its tip, express everything relative to a patient reference frame, guide to a
 target — and then **measure how accurate it actually is**.
 
-> **Status: Phases 1–2 complete.** Camera calibration, single-marker 6-DOF pose,
-> and occlusion-tolerant rigid-body tool tracking are working. Phases 3–5 are
-> described in the roadmap below. Acceptance steps live in
-> [TESTING.md](TESTING.md).
+> **Status: Phases 1–3 complete.** Camera calibration, single-marker 6-DOF pose,
+> occlusion-tolerant rigid-body tool tracking, and pivot (tip) calibration are
+> working. Phases 4–5 are described in the roadmap below. Acceptance steps live
+> in [TESTING.md](TESTING.md).
 
 <!-- DEMO GIF GOES HERE
      Suggested: ~8 s loop of `python app.py track` showing the drawn axes
@@ -256,6 +256,62 @@ arrangement removes it. `z` is already honoured in the tool config, so mounting
 two markers on a raised step works today. This is exactly why real tracked
 instruments are not flat.
 
+### 5. Calibrate the tip (Phase 3)
+
+```bash
+python app.py pivot            # plant the tip in a divot and precess
+python app.py track-tool       # tip now drawn as a cyan crosshair
+```
+
+The tip is the only part of a pointer anyone cares about, and it cannot be
+measured with a ruler — it is not on the markers, and the tool origin is an
+abstraction at the cluster centroid. So it is measured **kinematically**.
+
+Plant the tip in a fixed divot and pivot the body around it. The tip stays at
+one point in space, so for every frame:
+
+```
+  R_i @ p_tip + t_i = p_pivot          (tip is planted, so p_pivot is constant)
+  R_i @ p_tip - p_pivot = -t_i         (unknowns on one side)
+  [ R_i | -I ] x = -t_i                 x = [p_tip; p_pivot], 6 unknowns
+```
+
+Stack all frames into a `(3N × 6)` system and solve by linear least squares.
+No iteration, no initial guess, no local minima — the geometry made it linear,
+which is the elegant part.
+
+**The residual is a real accuracy figure.** `r_i = R_i p_tip + t_i − p_pivot` is
+how far the reconstructed tip wandered on frame i, **in millimetres** — unlike
+the pixel reprojection RMS of Phase 1. It absorbs tracking noise, a slipping
+tip, a flexing tool and wrong marker geometry all at once.
+
+**But the residual alone is not enough, and this is the interesting part.** If
+every `R_i` were identical, the system would have rank 3 instead of 6 and
+`p_tip` would be unrecoverable — orientation variety is literally what makes it
+solvable. Yet a set of near-identical frames agrees with *itself* beautifully.
+Measured on synthetic captures at a fixed noise level:
+
+| Cone swept | Residual RMS | True tip error |
+|---|---|---|
+| 45° | 0.80 mm | **0.44 mm** |
+| 3° | 0.79 mm | **5.04 mm** |
+
+The residual cannot tell those apart. The **condition number** of the stacked
+matrix can, and it catches both failure modes — too narrow a cone, and a cone
+swept on one side only. So conditioning is gated separately, and the capture
+screen shows an **orientation wheel** live: radius is tilt, angle is azimuth,
+and you want a full ring rather than a blob or an arc. Frame count is not
+progress.
+
+**Verification** is direct: `track-tool` draws the tip as a cyan crosshair and
+prints its camera-frame position. Replant the tip and rotate the tool around it
+— the crosshair should stay pinned to the divot while the body swings. Its
+wander *is* the calibration error.
+
+One constraint: **the camera must not move during pivot capture**, because
+`p_pivot` is solved in camera coordinates. Phase 4's patient reference frame is
+exactly what lifts this.
+
 ## Repository layout
 
 | Path | What lives there |
@@ -272,6 +328,9 @@ instruments are not flat.
 | [markers/tool_sheet.py](markers/tool_sheet.py) | print-ready tool sheet generated from the same config the tracker uses |
 | [tracking/single_marker.py](tracking/single_marker.py) | `solvePnP` pose + planar-ambiguity metric |
 | [tracking/rigid_body.py](tracking/rigid_body.py) | **one** `solvePnP` over all visible member corners |
+| [calibration_pivot/solve.py](calibration_pivot/solve.py) | the pivot least-squares system, residual and conditioning |
+| [calibration_pivot/capture.py](calibration_pivot/capture.py) | live pivot capture with the orientation wheel |
+| [calibration_pivot/tip.py](calibration_pivot/tip.py) | tip storage with a tool-geometry fingerprint |
 | [tracking/live.py](tracking/live.py), [tracking/overlay.py](tracking/overlay.py) | live tracking loops and pose overlays |
 | [app.py](app.py) | CLI entry point |
 | [config.yaml](config.yaml) | all geometry, camera and tolerance settings |
@@ -285,7 +344,7 @@ instruments are not flat.
 |---|---|---|
 | **1** | Scaffolding, ChArUco board generation, camera calibration, single-marker 6-DOF pose | ✅ done |
 | **2** | Rigid-body tool tracking: marker cluster with known geometry, one `solvePnP` over all visible corners, robust to partial occlusion | ✅ done |
-| **3** | Pivot calibration: solve the tip offset from `[R_i \| -I][p_tip; p_pivot] = -t_i` by least squares over all frames, report residual RMS | planned |
+| **3** | Pivot calibration: solve the tip offset from `[R_i \| -I][p_tip; p_pivot] = -t_i` by least squares over all frames, report residual RMS | ✅ done |
 | **4** | Patient reference frame (`T_ref_tool = T_cam_ref⁻¹ · T_cam_tool`), target point/axis, live distance and angular-deviation HUD with tolerance feedback | planned |
 | **5** | Accuracy characterisation: static jitter (std over N frames) and point accuracy (RMS in mm against a known grid), plus results write-up | planned |
 

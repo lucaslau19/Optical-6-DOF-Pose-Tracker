@@ -151,6 +151,29 @@ class ToolSheetConfig:
 
 
 @dataclass
+class PivotConfig:
+    min_markers: int = 2
+    max_reprojection_rms_px: float = 1.5
+    min_rotation_deg: float = 5.0
+    target_frames: int = 100
+    min_frames: int = 30
+    min_cone_half_angle_deg: float = 30.0
+    poses_file: Path = REPO_ROOT / "output" / "pivot_poses.npz"
+
+    @staticmethod
+    def from_dict(d: dict[str, Any]) -> "PivotConfig":
+        return PivotConfig(
+            min_markers=int(d.get("min_markers", 2)),
+            max_reprojection_rms_px=float(d.get("max_reprojection_rms_px", 1.5)),
+            min_rotation_deg=float(d.get("min_rotation_deg", 5.0)),
+            target_frames=int(d.get("target_frames", 100)),
+            min_frames=int(d.get("min_frames", 30)),
+            min_cone_half_angle_deg=float(d.get("min_cone_half_angle_deg", 30.0)),
+            poses_file=resolve_path(d.get("poses_file", "output/pivot_poses.npz")),
+        )
+
+
+@dataclass
 class ToolConfig:
     name: str
     marker_length_mm: float
@@ -159,6 +182,7 @@ class ToolConfig:
     low_confidence_markers: int = 1
     max_reprojection_rms_px: float = 2.0
     sheet: ToolSheetConfig = field(default_factory=ToolSheetConfig)
+    tip_calibration_file: Path = REPO_ROOT / "output" / "tool_tip.yaml"
 
     def __post_init__(self) -> None:
         if not self.members:
@@ -207,6 +231,9 @@ class ToolConfig:
                 render_dpi=int(sheet_raw.get("render_dpi", 300)),
                 margin_mm=float(sheet_raw.get("margin_mm", 18.0)),
             ),
+            tip_calibration_file=resolve_path(
+                d.get("tip_calibration_file", "output/tool_tip.yaml")
+            ),
         )
 
 
@@ -220,8 +247,9 @@ class Config:
     # None when config.yaml has no `tool:` section -- Phase 1 commands do not
     # need one, and the tool commands raise their own explanatory error.
     tool: ToolConfig | None = None
-    # Phases 3-4 are not parsed into dataclasses yet; keep the raw dicts so
-    # the file round-trips and nothing is silently dropped.
+    pivot: PivotConfig = field(default_factory=PivotConfig)
+    # Phase 4 is not parsed into dataclasses yet; keep the raw dicts so the
+    # file round-trips and nothing is silently dropped.
     navigation: dict[str, Any] = field(default_factory=dict)
     tolerances: dict[str, Any] = field(default_factory=dict)
 
@@ -250,6 +278,7 @@ def load_config(path: str | Path | None = None) -> Config:
         markers=MarkersConfig.from_dict(raw.get("markers", {})),
         calibration=CalibrationConfig.from_dict(raw.get("calibration", {})),
         tool=ToolConfig.from_dict(raw.get("tool") or {}),
+        pivot=PivotConfig.from_dict(raw.get("pivot") or {}),
         navigation=raw.get("navigation") or {},
         tolerances=raw.get("tolerances") or {},
         source_path=cfg_path,

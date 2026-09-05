@@ -103,6 +103,54 @@ def draw_coverage_grid(
     )
 
 
+def draw_orientation_wheel(
+    image: np.ndarray,
+    tilts_deg: np.ndarray,
+    azimuths_deg: np.ndarray,
+    origin: tuple[int, int],
+    *,
+    radius: int = 62,
+    target_cone_deg: float = 30.0,
+) -> None:
+    """Polar plot of the tool axis directions captured so far.
+
+    Radius is tilt from the mean direction, angle is azimuth about it. A good
+    pivot capture -- precessing the tool right around a wide cone -- fills an
+    annulus at or beyond the dashed target ring. A bad one is a blob in the
+    middle (never tilted enough) or an arc on one side (only swept half the
+    azimuth), and both are obvious at a glance.
+
+    This exists because orientation variety, not frame count, is what makes
+    the tip solvable, and a bare counter would let someone collect 150 useless
+    frames without noticing.
+    """
+    cx, cy = origin
+
+    # Scale so the target cone sits comfortably inside the disc, leaving room
+    # to show that the operator went further.
+    display_max_deg = max(target_cone_deg * 1.8, 20.0)
+
+    cv2.circle(image, (cx, cy), radius, (55, 55, 55), cv2.FILLED, cv2.LINE_AA)
+    cv2.circle(image, (cx, cy), radius, (110, 110, 110), 1, cv2.LINE_AA)
+
+    # Dashed target ring at the minimum useful cone angle.
+    target_r = int(radius * target_cone_deg / display_max_deg)
+    for deg in range(0, 360, 14):
+        a0, a1 = np.radians(deg), np.radians(deg + 7)
+        p0 = (int(cx + target_r * np.cos(a0)), int(cy + target_r * np.sin(a0)))
+        p1 = (int(cx + target_r * np.cos(a1)), int(cy + target_r * np.sin(a1)))
+        cv2.line(image, p0, p1, AMBER, 1, cv2.LINE_AA)
+
+    for tilt, az in zip(np.atleast_1d(tilts_deg), np.atleast_1d(azimuths_deg)):
+        r = radius * min(float(tilt) / display_max_deg, 1.0)
+        a = np.radians(float(az))
+        p = (int(round(cx + r * np.cos(a))), int(round(cy + r * np.sin(a))))
+        colour = GREEN if tilt >= target_cone_deg else GREY
+        cv2.circle(image, p, 2, colour, -1, cv2.LINE_AA)
+
+    cv2.circle(image, (cx, cy), 2, WHITE, -1, cv2.LINE_AA)
+
+
 def status_colour(ok: bool, marginal: bool = False) -> tuple[int, int, int]:
     """Green / amber / red, used consistently across every screen."""
     if ok:

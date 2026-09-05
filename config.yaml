@@ -121,7 +121,46 @@ tool:
     render_dpi: 300
     margin_mm: 18.0
 
-# --- Phases 3-4: placeholders, filled in as those phases land ---------------
+  # Where `app.py pivot` writes the solved tip offset, and where `track-tool`
+  # reads it from. Kept out of this file on purpose: a calibration is a
+  # measurement and belongs in a file that carries its own provenance.
+  tip_calibration_file: output/tool_tip.yaml
+
+# --- Phase 3: pivot (tip) calibration ---------------------------------------
+#
+# Plant the tool tip in a fixed divot and precess the body around it. Every
+# frame gives R_i @ p_tip + t_i = p_pivot, which is LINEAR in the six unknowns
+# [p_tip; p_pivot] -- see calibration_pivot/solve.py.
+#
+# THE CAMERA MUST NOT MOVE during capture: p_pivot is solved in the camera
+# frame, so a bumped tripod invalidates the whole set. Phase 4's reference
+# frame is what lifts this restriction.
+pivot:
+  # A frame is only captured when the tool pose is trustworthy. Two markers
+  # is the practical minimum -- a single-marker pose carries the planar
+  # ambiguity into the tip solve, where it becomes a systematic error.
+  min_markers: 2
+  max_reprojection_rms_px: 1.5
+
+  # Minimum rotation since the last captured frame. Without this you collect
+  # 200 near-identical poses while pausing, which inflates the frame count,
+  # makes the residual look better (they all agree), and adds nothing at all
+  # to the conditioning.
+  min_rotation_deg: 5.0
+
+  target_frames: 100 # capture stops offering "solve" as ready below min_frames
+  min_frames: 30
+
+  # Guidance thresholds shown live on the capture HUD. The cone half-angle is
+  # the single most important thing to get right -- see the docstring in
+  # calibration_pivot/solve.py for the measured effect of getting it wrong.
+  min_cone_half_angle_deg: 30.0
+
+  # Captured poses are saved next to the tip file so a calibration can be
+  # re-solved or audited without re-pivoting.
+  poses_file: output/pivot_poses.npz
+
+# --- Phase 4: placeholder, filled in as that phase lands --------------------
 
 navigation: {} # reference marker ID, target definition (Phase 4)
 

@@ -159,6 +159,118 @@ is exactly why real tracked instruments are not flat.
 
 ---
 
+## Phase 3 — pivot (tip) calibration
+
+Recovers where the tool's **tip** is, in the tool frame, by pivoting it in a
+fixed divot. This is the number that turns a tracked body into a pointer.
+
+### Setup
+
+**Build a tip.** Tape or glue a rigid pointed object to the marker sheet — a
+skewer, a pen, a screwdriver — so it cannot move relative to the markers. If
+the tip flexes or shifts, the whole method is measuring something that isn't
+there.
+
+**Make a divot the tip cannot slide out of.** A countersunk screw hole, the
+dimple in a door hinge, a V cut into stiff card, or a nut taped to the bench. A
+shallow dent is not enough: the tip must stay at *one point*, not a small area.
+Slippage shows up directly as residual.
+
+**Do not move the camera.** `p_pivot` is solved in camera coordinates, so it is
+only constant if the camera is. A bumped tripod invalidates every frame captured
+before the bump. (Phase 4's reference frame is what removes this restriction.)
+
+### P3.1 — Capture and solve
+
+```powershell
+.venv\Scripts\python.exe app.py pivot
+```
+
+Plant the tip, keep it planted, and **precess the tool around a wide cone** —
+tilt it well over and go *all the way around* the azimuth, not just side to
+side. Spin the tool about its own axis as you go. Press `c` to solve.
+
+Watch the **orientation wheel** on the right, not the frame counter. Each dot is
+a captured orientation: radius is tilt, angle is azimuth.
+
+| Wheel pattern | Meaning |
+|---|---|
+| Full ring at/outside the dashed circle | good — this is what you want |
+| Blob in the middle | never tilted enough — the tip offset is barely constrained |
+| Arc on one side | only swept half the cone |
+
+Frames are only kept once the tool has rotated 5° since the last one, so pausing
+to steady your hand costs nothing.
+
+### P3.2 — Reading the result
+
+**Two independent checks, and both must pass.**
+
+| Metric | Target |
+|---|---|
+| Residual RMS | < 1 mm excellent, 1–2 mm good, 2–3 mm marginal, > 3 mm redo |
+| Conditioning | `well conditioned` (cond < 5) or `acceptable` (cond < 10) |
+| Cone half-angle | ≥ 30° |
+| Azimuth covered | ≥ 60% of sectors |
+| `\|tip\|` from origin | matches a ruler measurement of your actual tool |
+
+**The residual alone is not a pass.** It is close to blind to conditioning. On
+synthetic captures at a fixed noise level the residual sat at ~0.8 mm whether
+the tool swept a 45° cone or a 3° one — while the true tip error was **0.44 mm
+vs 5.04 mm**, a 12× difference the residual could not see. A capture with almost
+no orientation variety agrees with itself beautifully. That is why the condition
+number is reported separately and why the tool refuses to call a narrow capture
+good.
+
+If conditioning is fine but the residual is high, the problem is physical: a
+slipping tip, a divot that is not a point, a flexing tool, or wrong
+`tool.markers` millimetres.
+
+Sanity-check `|tip|` against the real object with a ruler. If the tool origin is
+the centroid of the marker sheet and the tip sticks out 90 mm, the report should
+say about 90 mm.
+
+To re-solve from the saved poses without pivoting again:
+
+```powershell
+.venv\Scripts\python.exe app.py pivot --replay
+```
+
+### P3.3 — Tip stability (the Phase 3 win condition)
+
+```powershell
+.venv\Scripts\python.exe app.py track-tool
+```
+
+The tip is now drawn as a **cyan crosshair** on a stalk from the tool origin,
+and `TIP in camera` appears in the readout.
+
+**Replant the tip in the divot and rotate the tool around it.**
+
+| Check | Expected |
+|---|---|
+| Cyan crosshair | stays pinned to the divot while the body swings around it |
+| `TIP in camera` x, y, z | stay ~constant as the tool rotates |
+| Tool origin x, y, z | change a lot — that's the point |
+
+The crosshair's wander *is* your tip calibration error, shown at the scale you
+care about. A crosshair that orbits the divot rather than sitting on it means
+the tip offset is wrong — recapture with a wider cone.
+
+For reference, the synthetic version of this test wanders **0.688 mm (1.05 px)**
+across five orientations spanning 10–35° of tilt and the full azimuth. Real
+numbers will be larger.
+
+### P3.4 — Stale-calibration guard
+
+The tip file records a fingerprint of the tool geometry it was measured against.
+Change any `tool.markers` value in `config.yaml` and re-run `track-tool`: it must
+warn that the tip no longer matches. This matters because the failure is
+otherwise silent — the tool frame moves, the old tip now points somewhere else on
+the instrument, and nothing looks wrong. Undo the edit afterwards.
+
+---
+
 ## Synthetic checks (no hardware)
 
 These run against rendered ground truth and validate the maths independently of
@@ -173,3 +285,9 @@ any printed target:
 - A deliberately mis-typed member is correctly identified by per-marker RMS.
 - Tool status transitions `tracking → low_confidence → lost` at the configured
   thresholds.
+- The pivot least-squares solve is **exact** on noiseless input, and recovers a
+  known tip to 0.10 mm through the full render → detect → fit → solve pipeline.
+- The conditioning check flags a narrow-cone capture that the residual passes
+  (0.79 mm residual, 5.04 mm tip error).
+- The rotation gate reduces 40 poses 1° apart to 8 kept.
+- A stale tip calibration is detected via the tool-geometry fingerprint.

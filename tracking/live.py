@@ -10,6 +10,7 @@ import time
 
 import cv2
 
+from calibration_pivot.tip import load_tip_if_available
 from core.config import Config
 from core.intrinsics import CameraIntrinsics
 from core.video import camera
@@ -23,6 +24,7 @@ from tracking.overlay import (
     draw_tool_markers,
     draw_tool_origin,
     draw_tool_readout,
+    draw_tool_tip,
 )
 from tracking.rigid_body import RigidBodyTracker
 from tracking.single_marker import SingleMarkerTracker
@@ -141,6 +143,20 @@ def run_tool_tracking(cfg: Config) -> None:
     print(f"\nLoaded intrinsics from {cfg.camera.intrinsics_file}")
     print(geometry.summary())
 
+    # A calibrated tip is optional -- tool tracking works without one, it just
+    # cannot draw the business end.
+    tip, tip_warning = load_tip_if_available(cfg, geometry)
+    if tip is not None:
+        print(f"\nTip calibration ({cfg.tool.tip_calibration_file}):")
+        print(tip.summary())
+        if tip_warning:
+            print(f"\n  WARNING: {tip_warning}")
+    else:
+        print(
+            "\n  No tip calibration found -- run `python app.py pivot` to measure one.\n"
+            "  Tool tracking works without it; the tip marker just is not drawn."
+        )
+
     if geometry.is_coplanar():
         print(
             "\n  NOTE: this tool is coplanar (all markers on one flat sheet).\n"
@@ -177,7 +193,12 @@ def run_tool_tracking(cfg: Config) -> None:
             draw_tool_markers(display, tool, geometry, intrinsics)
             draw_tool_axes(display, tool, intrinsics, axis_len)
             draw_tool_origin(display, tool, intrinsics)
-            draw_tool_readout(display, tool, geometry)
+
+            tip_cam = None
+            if tip is not None:
+                tip_cam = draw_tool_tip(display, tool, tip.p_tip, intrinsics)
+
+            draw_tool_readout(display, tool, geometry, tip_cam=tip_cam)
             draw_status_bar(
                 display, fps.tick(), intrinsics, geometry.marker_length_mm, tool.n_markers_used
             )
@@ -188,7 +209,15 @@ def run_tool_tracking(cfg: Config) -> None:
             now = time.time()
             if key == ord("p") or now - last_print >= PRINT_INTERVAL_S:
                 last_print = now
-                print(tool.format_line())
+                line = tool.format_line()
+                if tip_cam is not None:
+                    # Printed so the tip position can be watched for constancy
+                    # while the tool rotates about a planted tip -- the numeric
+                    # form of the Phase 3 acceptance test.
+                    line += (
+                        f" | tip_cam [{tip_cam[0]:7.1f} {tip_cam[1]:7.1f} {tip_cam[2]:7.1f}] mm"
+                    )
+                print(line)
 
             if key in (ord("q"), 27):
                 break

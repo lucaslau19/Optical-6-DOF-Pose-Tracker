@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from core.hud import AMBER, BLACK, GREEN, GREY, RED, WHITE, draw_text_panel
+from core.hud import AMBER, BLACK, CYAN, GREEN, GREY, RED, WHITE, draw_text_panel
 from core.intrinsics import CameraIntrinsics
 from tracking.single_marker import MarkerPose
 
@@ -215,11 +215,53 @@ def draw_tool_markers(
         )
 
 
+def draw_tool_tip(
+    image: np.ndarray,
+    tool: "ToolPose",
+    p_tip: np.ndarray,
+    intrinsics: CameraIntrinsics,
+) -> np.ndarray | None:
+    """Reproject the calibrated tip and mark it. Returns its camera-frame position.
+
+    The tip is drawn as a crosshair with a stalk back to the tool origin, so
+    it reads as a rigid extension of the body rather than a floating dot.
+
+    This is the Phase 3 acceptance test made visible: with the tip replanted
+    in its divot, this marker should stay pinned to the divot while the tool
+    body swings around it. Any wander is the tip calibration error, shown
+    directly in the image at the scale you care about.
+    """
+    if tool.pose is None:
+        return None
+
+    p_tip = np.asarray(p_tip, dtype=float).reshape(3)
+    tip_cam = tool.pose.transform_points(p_tip)  # R @ p_tip + t
+
+    pts = _project(np.vstack([np.zeros(3), p_tip]), tool, intrinsics)
+    if not np.all(np.isfinite(pts)):
+        return tip_cam
+    origin_px = tuple(np.round(pts[0]).astype(int))
+    tip_px = tuple(np.round(pts[1]).astype(int))
+
+    cv2.line(image, origin_px, tip_px, BLACK, 4, cv2.LINE_AA)
+    cv2.line(image, origin_px, tip_px, CYAN, 2, cv2.LINE_AA)
+
+    x, y = tip_px
+    for colour, thickness in ((BLACK, 4), (CYAN, 2)):
+        cv2.line(image, (x - 13, y), (x + 13, y), colour, thickness, cv2.LINE_AA)
+        cv2.line(image, (x, y - 13), (x, y + 13), colour, thickness, cv2.LINE_AA)
+    cv2.circle(image, (x, y), 7, BLACK, 3, cv2.LINE_AA)
+    cv2.circle(image, (x, y), 7, CYAN, 1, cv2.LINE_AA)
+
+    return tip_cam
+
+
 def draw_tool_readout(
     image: np.ndarray,
     tool: "ToolPose",
     geometry: "ToolGeometry",
     origin: tuple[int, int] = (12, 12),
+    tip_cam: np.ndarray | None = None,
 ) -> None:
     """Tool status panel: marker count, pose, reprojection RMS, per-member RMS."""
     lines: list[tuple[str, tuple[int, int, int]]] = []
@@ -264,6 +306,17 @@ def draw_tool_readout(
     lines.append((f"  x {x:8.1f}   y {y:8.1f}   z {z:8.1f}  mm", WHITE))
     lines.append((f"  rx{rx:8.1f}  ry{ry:8.1f}  rz{rz:8.1f}  deg", WHITE))
     lines.append((f"  range        : {tool.distance_mm:7.1f} mm", WHITE))
+
+    if tip_cam is not None:
+        # With the tip planted in a divot, these three numbers should stay
+        # constant while the tool body rotates. That is the Phase 3 test.
+        lines.append(
+            (
+                f"  TIP in camera: [{tip_cam[0]:7.1f} {tip_cam[1]:7.1f} "
+                f"{tip_cam[2]:7.1f}] mm",
+                CYAN,
+            )
+        )
 
     if tool.is_ambiguous:
         amb = "inf" if not np.isfinite(tool.ambiguity_ratio) else f"{tool.ambiguity_ratio:.2f}"

@@ -31,6 +31,7 @@ with no axis flip at all.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -186,6 +187,27 @@ class ToolGeometry:
         entire idea of rigid-body tracking.
         """
         return np.vstack([self.markers[i].corners for i in marker_ids]).astype(np.float32)
+
+    def fingerprint(self) -> str:
+        """Short hash of the geometry this tool was defined with.
+
+        A tip calibration is only valid for the geometry it was measured
+        against: edit a member's position in config.yaml and the tool frame
+        itself moves, so a previously solved `p_tip` now points somewhere
+        else on the instrument. Nothing about the stale file looks wrong, and
+        the error is a quiet few millimetres -- exactly the kind that reaches
+        a report unnoticed. Storing this alongside the tip lets the loader
+        say so out loud.
+        """
+        parts = [f"{self.marker_length_mm:.4f}"]
+        for marker_id in self.ids:
+            m = self.markers[marker_id]
+            parts.append(
+                f"{marker_id}:{m.center[0]:.4f},{m.center[1]:.4f},"
+                f"{m.center[2]:.4f},{m.rotation_deg:.4f}"
+            )
+        digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+        return digest[:12]
 
     def summary(self) -> str:
         lo, hi = self.extent_mm()
