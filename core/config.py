@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import yaml
 
 # Repository root = parent of the `core` package. All relative paths in
@@ -238,6 +239,90 @@ class ToolConfig:
 
 
 @dataclass
+class TargetAxisConfig:
+    """A trajectory: a point on the axis and a direction, in the REFERENCE frame."""
+
+    point: np.ndarray
+    direction: np.ndarray
+
+    def __post_init__(self) -> None:
+        self.point = np.asarray(self.point, dtype=float).reshape(3)
+        d = np.asarray(self.direction, dtype=float).reshape(3)
+        norm = float(np.linalg.norm(d))
+        if norm < 1e-9:
+            raise ValueError("config.yaml: navigation.target.axis.direction is a zero vector")
+        # Normalised once here so every downstream projection can assume a unit
+        # vector rather than re-normalising (or forgetting to).
+        self.direction = d / norm
+
+
+@dataclass
+class NavigationConfig:
+    target_point: np.ndarray  # (3,) in the REFERENCE frame, mm
+    target_axis: TargetAxisConfig | None
+    tool_axis: np.ndarray | None  # (3,) unit, in the TOOL frame; None = derive from tip
+    captured_points_file: Path
+
+    @staticmethod
+    def from_dict(d: dict[str, Any]) -> "NavigationConfig | None":
+        if not d:
+            return None
+        target = d.get("target") or {}
+        if "point" not in target:
+            raise KeyError("config.yaml: missing required key 'navigation.target.point'")
+
+        axis_raw = target.get("axis") or None
+        axis = None
+        if axis_raw:
+            axis = TargetAxisConfig(
+                point=_require(axis_raw, "point", "navigation.target.axis"),
+                direction=_require(axis_raw, "direction", "navigation.target.axis"),
+            )
+
+        # "auto" (the default) means "derive from the calibrated tip offset".
+        raw_axis = d.get("tool_axis", "auto")
+        tool_axis: np.ndarray | None = None
+        if isinstance(raw_axis, str):
+            if raw_axis.strip().lower() != "auto":
+                raise ValueError(
+                    f"config.yaml: navigation.tool_axis must be 'auto' or [x, y, z], "
+                    f"got {raw_axis!r}"
+                )
+        else:
+            vec = np.asarray(raw_axis, dtype=float).reshape(3)
+            norm = float(np.linalg.norm(vec))
+            if norm < 1e-9:
+                raise ValueError("config.yaml: navigation.tool_axis is a zero vector")
+            tool_axis = vec / norm
+
+        return NavigationConfig(
+            target_point=np.asarray(target["point"], dtype=float).reshape(3),
+            target_axis=axis,
+            tool_axis=tool_axis,
+            captured_points_file=resolve_path(
+                d.get("captured_points_file", "output/digitized_points.yaml")
+            ),
+        )
+
+
+@dataclass
+class TolerancesConfig:
+    distance_mm: float = 2.0
+    offset_mm: float = 2.0
+    angle_deg: float = 5.0
+    warn_factor: float = 2.0
+
+    @staticmethod
+    def from_dict(d: dict[str, Any]) -> "TolerancesConfig":
+        return TolerancesConfig(
+            distance_mm=float(d.get("distance_mm", 2.0)),
+            offset_mm=float(d.get("offset_mm", 2.0)),
+            angle_deg=float(d.get("angle_deg", 5.0)),
+            warn_factor=float(d.get("warn_factor", 2.0)),
+        )
+
+
+@dataclass
 class Config:
     camera: CameraConfig
     aruco: ArucoConfig
@@ -248,10 +333,11 @@ class Config:
     # need one, and the tool commands raise their own explanatory error.
     tool: ToolConfig | None = None
     pivot: PivotConfig = field(default_factory=PivotConfig)
-    # Phase 4 is not parsed into dataclasses yet; keep the raw dicts so the
-    # file round-trips and nothing is silently dropped.
-    navigation: dict[str, Any] = field(default_factory=dict)
-    tolerances: dict[str, Any] = field(default_factory=dict)
+    # The patient reference body. Same shape as `tool` because it is the same
+    # kind of object -- a rigid cluster of markers with known geometry.
+    reference: ToolConfig | None = None
+    navigation: NavigationConfig | None = None
+    tolerances: TolerancesConfig = field(default_factory=TolerancesConfig)
 
     source_path: Path = REPO_ROOT / "config.yaml"
 
@@ -279,7 +365,8 @@ def load_config(path: str | Path | None = None) -> Config:
         calibration=CalibrationConfig.from_dict(raw.get("calibration", {})),
         tool=ToolConfig.from_dict(raw.get("tool") or {}),
         pivot=PivotConfig.from_dict(raw.get("pivot") or {}),
-        navigation=raw.get("navigation") or {},
-        tolerances=raw.get("tolerances") or {},
+        reference=ToolConfig.from_dict(raw.get("reference") or {}),
+        navigation=NavigationConfig.from_dict(raw.get("navigation") or {}),
+        tolerances=TolerancesConfig.from_dict(raw.get("tolerances") or {}),
         source_path=cfg_path,
     )

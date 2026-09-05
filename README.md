@@ -5,10 +5,11 @@ navigation system is built: calibrate the camera, track a rigid tool, calibrate
 its tip, express everything relative to a patient reference frame, guide to a
 target — and then **measure how accurate it actually is**.
 
-> **Status: Phases 1–3 complete.** Camera calibration, single-marker 6-DOF pose,
-> occlusion-tolerant rigid-body tool tracking, and pivot (tip) calibration are
-> working. Phases 4–5 are described in the roadmap below. Acceptance steps live
-> in [TESTING.md](TESTING.md).
+> **Status: Phases 1–4 complete.** Camera calibration, single-marker 6-DOF pose,
+> occlusion-tolerant rigid-body tool tracking, pivot (tip) calibration, and
+> reference-relative navigation with target guidance are working. Phase 5
+> (accuracy characterisation) is described in the roadmap below. Acceptance
+> steps live in [TESTING.md](TESTING.md).
 
 <!-- DEMO GIF GOES HERE
      Suggested: ~8 s loop of `python app.py track` showing the drawn axes
@@ -312,6 +313,68 @@ One constraint: **the camera must not move during pivot capture**, because
 `p_pivot` is solved in camera coordinates. Phase 4's patient reference frame is
 exactly what lifts this.
 
+### 6. Navigate (Phase 4)
+
+```bash
+python app.py generate-tool-sheet --body reference   # print + measure it too
+python app.py navigate
+```
+
+A second rigid body — the **patient reference** — is fixed to whatever is being
+navigated on. Pose is then reported relative to *it* rather than to the camera:
+
+```
+  T_ref_tool = T_cam_ref⁻¹ · T_cam_tool
+             = T_ref_cam · T_cam_tool        ← `cam` cancels
+```
+
+Both measurements are made in the camera frame, so composing them cancels the
+camera out. Pick the camera up, move it across the bench, and `T_cam_tool` and
+`T_cam_ref` both change completely while `T_ref_tool` does not change at all.
+
+That is the defining feature of an optical navigation system — it is why a
+surgeon can reposition the tracker mid-procedure, and why the patient's bone
+carries its own marker array. It is also, satisfyingly, one matrix multiply.
+
+Measured across five very different camera poses:
+
+| | Tip position spread |
+|---|---|
+| Camera frame | 120.6 mm |
+| **Reference frame** | **5.2 mm** |
+| Reference frame, well-conditioned views | **1.7 mm** |
+
+**If the reference is not visible, nothing relative can be computed** — and
+there is deliberately no fallback to the last known `T_cam_ref`. Reusing a stale
+one would give confident, wrong answers the instant the camera moved, which is
+precisely the failure this phase exists to prevent. So it is a loud
+`REFERENCE LOST` state and the guidance goes blank rather than stale.
+
+**Guidance.** The HUD shows tip-to-target distance in a large banner, and for a
+trajectory (`navigation.target.axis`) also the perpendicular **offset**, the
+**angular deviation** of the tool's long axis, and the **depth** along the axis.
+Offset and angle are independent failure modes — you can be dead on the entry
+point while pointing 20° wrong — so both are always shown rather than collapsed
+into one "error". A bullseye dial shows the off-axis error as a dot to steer
+into a ring, which is a far more natural control task than reading millimetres.
+
+The tool's long axis defaults to the direction from the tool origin to the
+**calibrated tip**, so it comes free from Phase 3 and cannot drift out of
+agreement with the physical instrument the way a hand-typed vector would.
+
+**Digitising.** Press `d` to record the tip position in the reference frame.
+Touch two marks a known distance apart and the console prints the measured gap —
+the first number with the *whole chain* in it. Two points 40 mm apart, digitised
+from different camera poses, measure 39.889 mm synthetically.
+
+**Honest caveat:** the relative pose carries the error of *two* rigid-body fits,
+so reference-frame numbers jitter somewhat more than camera-frame ones. And
+because both default bodies are coplanar sheets, the planar ambiguity still
+applies — to the **reference** as much as the tool, and that one is the more
+dangerous because a stationary reference looks reassuringly stable while being
+the thing everything is measured against. The HUD flags either body going
+ambiguous.
+
 ## Repository layout
 
 | Path | What lives there |
@@ -331,6 +394,10 @@ exactly what lifts this.
 | [calibration_pivot/solve.py](calibration_pivot/solve.py) | the pivot least-squares system, residual and conditioning |
 | [calibration_pivot/capture.py](calibration_pivot/capture.py) | live pivot capture with the orientation wheel |
 | [calibration_pivot/tip.py](calibration_pivot/tip.py) | tip storage with a tool-geometry fingerprint |
+| [navigation/relative.py](navigation/relative.py) | `T_ref_tool = T_cam_ref⁻¹ · T_cam_tool` — the camera-independence step |
+| [navigation/guidance.py](navigation/guidance.py) | distance, perpendicular offset, angular deviation, tolerance bands |
+| [navigation/overlay.py](navigation/overlay.py), [navigation/live.py](navigation/live.py) | navigation HUD and live loop |
+| [navigation/digitize.py](navigation/digitize.py) | digitised points and pairwise distances |
 | [tracking/live.py](tracking/live.py), [tracking/overlay.py](tracking/overlay.py) | live tracking loops and pose overlays |
 | [app.py](app.py) | CLI entry point |
 | [config.yaml](config.yaml) | all geometry, camera and tolerance settings |
@@ -345,7 +412,7 @@ exactly what lifts this.
 | **1** | Scaffolding, ChArUco board generation, camera calibration, single-marker 6-DOF pose | ✅ done |
 | **2** | Rigid-body tool tracking: marker cluster with known geometry, one `solvePnP` over all visible corners, robust to partial occlusion | ✅ done |
 | **3** | Pivot calibration: solve the tip offset from `[R_i \| -I][p_tip; p_pivot] = -t_i` by least squares over all frames, report residual RMS | ✅ done |
-| **4** | Patient reference frame (`T_ref_tool = T_cam_ref⁻¹ · T_cam_tool`), target point/axis, live distance and angular-deviation HUD with tolerance feedback | planned |
+| **4** | Patient reference frame (`T_ref_tool = T_cam_ref⁻¹ · T_cam_tool`), target point/axis, live distance and angular-deviation HUD with tolerance feedback | ✅ done |
 | **5** | Accuracy characterisation: static jitter (std over N frames) and point accuracy (RMS in mm against a known grid), plus results write-up | planned |
 
 ---

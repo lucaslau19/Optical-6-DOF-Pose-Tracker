@@ -160,8 +160,69 @@ pivot:
   # re-solved or audited without re-pivoting.
   poses_file: output/pivot_poses.npz
 
-# --- Phase 4: placeholder, filled in as that phase lands --------------------
+# --- Phase 4: patient reference frame + navigation ---------------------------
+#
+# The reference body is a SECOND rigid marker cluster, fixed to the "patient".
+# It uses exactly the same machinery as the tool (same config shape, same
+# multi-marker least-squares PnP, same occlusion tolerance). Its purpose:
+#
+#     T_ref_tool = T_cam_ref^-1 @ T_cam_tool
+#
+# Both sides share the camera, so the camera cancels. That single line is what
+# lets the camera be picked up and moved during use -- the defining feature of
+# a real optical navigation system, and the thing that makes this more than a
+# marker demo.
+#
+# MARKER ID HYGIENE: the tool and the reference must not share any marker ID,
+# or both trackers would claim the same detection and the relative pose would
+# be nonsense. This is checked at startup. Note also that the ChArUco
+# calibration board uses IDs 0-17 of this same dictionary, which overlaps the
+# tool's 10-13 -- harmless in practice (you do not calibrate and navigate at
+# the same time) but do not leave the board in frame while navigating.
+reference:
+  name: Patient reference
+  marker_length_mm: 30.0
+  markers:
+    - { id: 20, x: -30.0, y: -30.0, z: 0.0 }
+    - { id: 21, x: 30.0, y: -30.0, z: 0.0 }
+    - { id: 22, x: -30.0, y: 30.0, z: 0.0 }
+    - { id: 23, x: 30.0, y: 30.0, z: 0.0 }
+  min_markers: 1
+  low_confidence_markers: 1
+  max_reprojection_rms_px: 2.0
+  sheet:
+    render_dpi: 300
+    margin_mm: 18.0
 
-navigation: {} # reference marker ID, target definition (Phase 4)
+navigation:
+  # Everything here is expressed in the REFERENCE frame, in millimetres --
+  # i.e. relative to the patient, not the camera. That is the whole point.
+  target:
+    # The point to guide the tip to. The default sits 60 mm out along the
+    # reference sheet's -Z (towards the camera side of the sheet); change it
+    # to something you can physically touch with the tip.
+    point: [0.0, 0.0, -60.0]
 
-tolerances: {} # distance / angle tolerance bands for the HUD (Phase 4)
+    # OPTIONAL trajectory. Delete this block for point-only guidance. The
+    # direction need not be normalised.
+    axis:
+      point: [0.0, 0.0, -60.0]
+      direction: [0.0, 0.0, 1.0]
+
+  # The tool's long axis, in the TOOL frame, used for angular deviation.
+  # "auto" derives it from the calibrated tip: the direction from the tool
+  # origin to the tip IS the instrument's pointing direction, so it comes free
+  # from Phase 3 and cannot disagree with the physical object. Override with an
+  # explicit [x, y, z] only if your tool points somewhere else.
+  tool_axis: auto
+
+  # Points digitised with the 'd' key are appended here.
+  captured_points_file: output/digitized_points.yaml
+
+tolerances:
+  # Green inside the tolerance, amber out to warn_factor x tolerance, red
+  # beyond. Same green/amber/red meaning as every other screen in this project.
+  distance_mm: 2.0 # tip to target point
+  offset_mm: 2.0 # perpendicular offset from the target axis
+  angle_deg: 5.0 # angular deviation of the tool axis from the target axis
+  warn_factor: 2.0

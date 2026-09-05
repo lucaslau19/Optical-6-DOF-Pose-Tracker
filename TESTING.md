@@ -271,6 +271,121 @@ the instrument, and nothing looks wrong. Undo the edit afterwards.
 
 ---
 
+## Phase 4 — reference frame and navigation
+
+The point of this phase: pose is reported **relative to the patient**, not the
+camera, so the camera becomes free to move.
+
+### Setup
+
+```powershell
+.venv\Scripts\python.exe app.py generate-tool-sheet --body reference
+```
+
+Print at 100%, measure, correct `reference.markers` in `config.yaml` exactly as
+you did for the tool. Then:
+
+- **Fix the reference sheet to the "patient"** — tape it to the object or bench
+  you are navigating on. It must not move relative to that object during use.
+  The tool sheet is the thing you pick up.
+- Keep the **tool** and **reference** marker IDs disjoint (10–13 vs 20–23). The
+  app refuses to start if they overlap, because both trackers would claim the
+  same detection and the relative pose would be quietly meaningless.
+- Do **not** leave the ChArUco calibration board in frame: it uses IDs 0–17 of
+  the same dictionary, which overlaps the tool's 10–13.
+- Set `navigation.target.point` to somewhere you can physically touch with the
+  tip, in **reference-frame** millimetres.
+
+```powershell
+.venv\Scripts\python.exe app.py navigate
+```
+
+### P4.1 — Camera independence (the key test)
+
+**Put the tool down.** Both bodies now static relative to each other. Then
+**pick the camera up and move it** — walk it around, change the angle, change
+the distance.
+
+| Quantity | Expected |
+|---|---|
+| `tip in CAM` | changes a lot — hundreds of mm |
+| `tip in REF` | **stays essentially constant** |
+| `T_ref_tool` t and r | stay essentially constant |
+| Target bullseye in the video | stays glued to the same physical spot |
+
+This is the whole phase in one observation. `T_ref_tool = T_cam_ref⁻¹ ·
+T_cam_tool` — both measurements share the camera, so it cancels.
+
+For reference, the synthetic version of this test across five very different
+camera poses:
+
+| | Tip spread |
+|---|---|
+| Camera frame | 120.6 mm |
+| Reference frame | 5.2 mm |
+| Reference frame, closer / more oblique views | **1.7 mm** |
+
+Note the last row. The residual few millimetres is **not** the reference-frame
+maths — it is the coplanar planar ambiguity at long range. In the far set, 4 of
+5 views were flagged `AMBIGUOUS`; in the close set, 1 of 5, and the spread fell
+by 3×. If your numbers drift as you move the camera, look at the ambiguity
+warning before doubting the transform.
+
+Expect reference-frame numbers to jitter somewhat **more** than camera-frame
+ones when both bodies are well conditioned: the relative pose carries the error
+of *two* rigid-body fits, not one. That is the price of camera independence.
+
+### P4.2 — Fixed physical point
+
+Touch the tip to a fixed mark and hold it there. Move the camera around.
+`tip in REF` should stay put. Press `d` at several camera positions and the
+digitised points should cluster.
+
+### P4.3 — Reference lost
+
+Cover the reference sheet. Expect a red **REFERENCE LOST**, the guidance
+readout blank, and the distance banner showing `--`.
+
+There is deliberately **no fallback to the last known reference pose**. Reusing
+a stale `T_cam_ref` would produce confident, wrong numbers the instant the
+camera moved — exactly the failure this phase exists to prevent.
+
+### P4.4 — Target guidance
+
+Bring the tip towards the target point.
+
+| Check | Expected |
+|---|---|
+| Distance banner | counts down towards 0 as you approach |
+| Banner colour | red → amber → **green** inside `tolerances.distance_mm` |
+| Offset / angle rows | green inside their tolerances |
+| Bullseye dot | moves towards the centre; inside the green ring in tolerance |
+| Tool held backwards | angle reads ~180°, **not** 0° |
+
+That last row is deliberate: the angular deviation uses the full 0–180° range
+rather than the acute angle, so holding the instrument reversed is visible
+rather than hidden.
+
+### P4.5 — Digitising and the ruler check (first end-to-end accuracy number)
+
+Touch the tip to two marks a **known** distance apart — ruler graduations,
+the ends of a gauge block, two drilled holes. Press `d` at each. The console
+prints the gap immediately, and the HUD shows `last gap`.
+
+Compare against the ruler. This is the first number with the **whole chain** in
+it: camera calibration, both rigid-body fits, the tip calibration and the
+reference transform. Phase 5 turns this into a proper characterisation.
+
+Do it from **different camera positions** for each point — if the answer changes
+when the camera does, the reference frame is not doing its job. The synthetic
+version of exactly that (two points 40 mm apart, each digitised from a different
+camera pose) measures **39.889 mm**, an error of 0.111 mm.
+
+Press `s` to save, or quit — points are written to
+`navigation.captured_points_file` with all pairwise distances printed.
+
+---
+
 ## Synthetic checks (no hardware)
 
 These run against rendered ground truth and validate the maths independently of
@@ -291,3 +406,11 @@ any printed target:
   (0.79 mm residual, 5.04 mm tip error).
 - The rotation gate reduces 40 poses 1° apart to 8 kept.
 - A stale tip calibration is detected via the tool-geometry fingerprint.
+- Across five camera poses, the reference-frame tip moves 23× less than the
+  camera-frame tip (5.2 mm vs 120.6 mm), falling to 1.7 mm on well-conditioned
+  views.
+- A hidden reference produces `REFERENCE LOST` with no stale fallback.
+- Guidance offset, depth and angle are exact to 1e-9 against analytic geometry;
+  a reversed tool reads 180°, not 0°.
+- Two points 40 mm apart, digitised from *different* camera poses, measure
+  39.889 mm.

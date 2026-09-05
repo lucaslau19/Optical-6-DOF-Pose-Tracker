@@ -8,7 +8,7 @@
     python app.py generate-tool-sheet  # print-ready rigid-tool marker sheet
     python app.py track-tool           # live rigid-body tool pose (occlusion tolerant)
     python app.py pivot                # pivot (tip) calibration -> tip offset
-    python app.py navigate             # (Phase 4) reference frame + guidance
+    python app.py navigate             # reference-relative pose + target guidance
     python app.py accuracy             # (Phase 5) jitter + point accuracy
 
 Run `python app.py <command> --help` for per-command options.
@@ -234,32 +234,54 @@ def cmd_track(args: argparse.Namespace) -> int:
 
 
 def cmd_generate_tool_sheet(args: argparse.Namespace) -> int:
-    from markers.tool import load_tool_geometry
+    from markers.tool import ToolGeometry, load_tool_geometry
     from markers.tool_sheet import generate_tool_sheet
 
     cfg = _load(args)
-    geometry = load_tool_geometry(cfg)
-
-    print(geometry.summary())
-
-    too_close = geometry.overlapping_pairs()
-    if too_close:
-        print(
-            f"\n  WARNING: these member pairs are too close to leave a usable quiet\n"
-            f"  zone between them, and may fail to detect: {too_close}\n"
-            "  Space them further apart in config.yaml."
-        )
-
     out_dir = resolve_path(args.out)
-    out_path = out_dir / f"tool_{geometry.name.replace(' ', '_').lower()}.png"
-    info = generate_tool_sheet(cfg, geometry, out_path)
 
-    print("\nTool sheet")
-    print("-" * 60)
-    print(f"  file        : {out_path}")
-    print(f"  image       : {info['pixels'][0]} x {info['pixels'][1]} px @ {info['dpi']} dpi")
-    print(f"  printed size: {info['sheet_mm'][0]:.1f} x {info['sheet_mm'][1]:.1f} mm")
-    print(f"  marker      : {info['marker_mm']:.2f} mm")
+    bodies: list[tuple[str, ToolGeometry]] = []
+    if args.body in ("tool", "both"):
+        bodies.append(("tool", load_tool_geometry(cfg)))
+    if args.body in ("reference", "both"):
+        if cfg.reference is None:
+            if args.body == "reference":
+                raise ValueError("config.yaml has no `reference:` section to generate.")
+            print("  (no `reference:` section in config.yaml -- skipping that sheet)\n")
+        else:
+            bodies.append(("reference", ToolGeometry(cfg.reference)))
+
+    # Two bodies sharing a marker ID would be claimed by both trackers at
+    # once, so catch it here rather than after the sheets are printed.
+    if len(bodies) == 2:
+        shared = sorted(set(bodies[0][1].ids) & set(bodies[1][1].ids))
+        if shared:
+            raise ValueError(
+                f"tool and reference share marker id(s) {shared}. Give each body "
+                "its own IDs in config.yaml before printing."
+            )
+
+    for role, geometry in bodies:
+        print(geometry.summary())
+
+        too_close = geometry.overlapping_pairs()
+        if too_close:
+            print(
+                f"\n  WARNING: these member pairs are too close to leave a usable quiet\n"
+                f"  zone between them, and may fail to detect: {too_close}\n"
+                "  Space them further apart in config.yaml."
+            )
+
+        out_path = out_dir / f"{role}_{geometry.name.replace(' ', '_').lower()}.png"
+        info = generate_tool_sheet(cfg, geometry, out_path)
+
+        print(f"\n{role.capitalize()} sheet")
+        print("-" * 60)
+        print(f"  file        : {out_path}")
+        print(f"  image       : {info['pixels'][0]} x {info['pixels'][1]} px @ {info['dpi']} dpi")
+        print(f"  printed size: {info['sheet_mm'][0]:.1f} x {info['sheet_mm'][1]:.1f} mm")
+        print(f"  marker      : {info['marker_mm']:.2f} mm")
+        print()
 
     print(
         """
@@ -271,6 +293,9 @@ NEXT: print, then MEASURE -- the config millimetres are what make the pose metri
      sheet. Correct tool.markers x/y in config.yaml to what you measured.
   4. Mount it FLAT and rigid. A tool that flexes is not a rigid body, and the
      whole method assumes it is.
+  5. The REFERENCE sheet must be fixed to whatever plays the part of the
+     patient, and must not move relative to it during use. The tool sheet is
+     the thing you pick up.
 """
     )
     return 0
@@ -341,6 +366,19 @@ def cmd_pivot(args: argparse.Namespace) -> int:
 
     result = run_pivot_calibration(cfg)
     return 0 if result is not None else 1
+
+
+# --------------------------------------------------------------------------
+# navigate   (Phase 4)
+# --------------------------------------------------------------------------
+
+
+def cmd_navigate(args: argparse.Namespace) -> int:
+    from navigation.live import run_navigation
+
+    cfg = _load(args)
+    run_navigation(cfg)
+    return 0
 
 
 # --------------------------------------------------------------------------
@@ -425,6 +463,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="render a print-ready sheet of the tool's markers at their configured positions",
     )
     p_sheet.add_argument("--out", default="output/print", help="output directory")
+    p_sheet.add_argument(
+        "--body",
+        choices=["tool", "reference", "both"],
+        default="both",
+        help="which rigid body's sheet to render (default: both)",
+    )
     p_sheet.set_defaults(func=cmd_generate_tool_sheet)
 
     p_tool = sub.add_parser(
@@ -444,8 +488,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_pivot.set_defaults(func=cmd_pivot)
 
+    p_nav = sub.add_parser(
+        "navigate",
+        help="reference-relative pose, target guidance and point digitising",
+    )
+    p_nav.set_defaults(func=cmd_navigate)
+
     for name, phase, desc in [
-        ("navigate", 4, "patient reference frame, target guidance and tolerance HUD"),
         ("accuracy", 5, "static jitter and point accuracy against known geometry"),
     ]:
         p = sub.add_parser(name, help=f"(Phase {phase}) {desc}")
