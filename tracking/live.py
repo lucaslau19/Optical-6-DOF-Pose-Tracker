@@ -1,4 +1,8 @@
-"""Live single-marker tracking loop (Phase 1 demo)."""
+"""Live tracking loops.
+
+`run_single_marker_tracking` -- Phase 1, one pose per visible marker.
+`run_tool_tracking`          -- Phase 2, one pose for a rigid marker cluster.
+"""
 
 from __future__ import annotations
 
@@ -9,12 +13,18 @@ import cv2
 from core.config import Config
 from core.intrinsics import CameraIntrinsics
 from core.video import camera
+from markers.tool import load_tool_geometry
 from tracking.overlay import (
     draw_marker_axes,
     draw_marker_outline,
     draw_pose_readout,
     draw_status_bar,
+    draw_tool_axes,
+    draw_tool_markers,
+    draw_tool_origin,
+    draw_tool_readout,
 )
+from tracking.rigid_body import RigidBodyTracker
 from tracking.single_marker import SingleMarkerTracker
 
 # Console printing is throttled: a 30 fps stream would otherwise scroll far
@@ -110,6 +120,75 @@ def run_single_marker_tracking(cfg: Config, *, marker_length_mm: float | None = 
                 for marker in markers:
                     flag = "  <-- ambiguous" if marker.is_ambiguous else ""
                     print(marker.format_line() + flag)
+
+            if key in (ord("q"), 27):
+                break
+
+
+def run_tool_tracking(cfg: Config) -> None:
+    """Phase 2: track a rigid multi-marker tool as one 6-DOF body."""
+    intrinsics = CameraIntrinsics.load(cfg.camera.intrinsics_file)
+    intrinsics.validate_for(cfg.camera.frame_width, cfg.camera.frame_height)
+
+    geometry = load_tool_geometry(cfg)
+    tracker = RigidBodyTracker(
+        geometry=geometry,
+        intrinsics=intrinsics,
+        dictionary_name=cfg.aruco.dictionary,
+        corner_refinement=cfg.aruco.corner_refinement,
+    )
+
+    print(f"\nLoaded intrinsics from {cfg.camera.intrinsics_file}")
+    print(geometry.summary())
+
+    if geometry.is_coplanar():
+        print(
+            "\n  NOTE: this tool is coplanar (all markers on one flat sheet).\n"
+            "  That keeps the two-fold planar pose ambiguity -- better conditioned\n"
+            "  than a single marker, but not eliminated. A non-coplanar arrangement\n"
+            "  (markers on a folded bracket, different z in config.yaml) removes it,\n"
+            "  which is why real tracked instruments are not flat."
+        )
+    too_close = geometry.overlapping_pairs()
+    if too_close:
+        print(f"\n  WARNING: member markers printed too close to detect reliably: {too_close}")
+
+    print("\nOne pose is fitted to ALL visible member corners at once (T_cam_tool).")
+    print("Cover markers with your hand: the axes should stay put while >= 1 is visible.")
+    print("Hidden members are drawn as amber predicted outlines.")
+    print("Keys: q quit | p force a pose print\n")
+
+    fps = _FpsMeter()
+    last_print = 0.0
+    axis_len = max(20.0, geometry.marker_length_mm)
+
+    with camera(
+        cfg.camera.device_index, cfg.camera.frame_width, cfg.camera.frame_height, cfg.camera.fps
+    ) as cap:
+        while True:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                print("Camera read failed; stopping.")
+                break
+
+            tool = tracker.process(frame)
+            display = frame.copy()
+
+            draw_tool_markers(display, tool, geometry, intrinsics)
+            draw_tool_axes(display, tool, intrinsics, axis_len)
+            draw_tool_origin(display, tool, intrinsics)
+            draw_tool_readout(display, tool, geometry)
+            draw_status_bar(
+                display, fps.tick(), intrinsics, geometry.marker_length_mm, tool.n_markers_used
+            )
+
+            cv2.imshow(f"Rigid-body tool tracking -- {geometry.name}", display)
+            key = cv2.waitKey(1) & 0xFF
+
+            now = time.time()
+            if key == ord("p") or now - last_print >= PRINT_INTERVAL_S:
+                last_print = now
+                print(tool.format_line())
 
             if key in (ord("q"), 27):
                 break

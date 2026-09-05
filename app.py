@@ -5,6 +5,8 @@
     python app.py generate-markers     # print-ready ChArUco board + markers
     python app.py calibrate            # camera intrinsics from a ChArUco board
     python app.py track                # live single-marker 6-DOF pose
+    python app.py generate-tool-sheet  # print-ready rigid-tool marker sheet
+    python app.py track-tool           # live rigid-body tool pose (occlusion tolerant)
     python app.py pivot                # (Phase 3) tool tip calibration
     python app.py navigate             # (Phase 4) reference frame + guidance
     python app.py accuracy             # (Phase 5) jitter + point accuracy
@@ -227,6 +229,62 @@ def cmd_track(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# generate-tool-sheet  /  track-tool   (Phase 2)
+# --------------------------------------------------------------------------
+
+
+def cmd_generate_tool_sheet(args: argparse.Namespace) -> int:
+    from markers.tool import load_tool_geometry
+    from markers.tool_sheet import generate_tool_sheet
+
+    cfg = _load(args)
+    geometry = load_tool_geometry(cfg)
+
+    print(geometry.summary())
+
+    too_close = geometry.overlapping_pairs()
+    if too_close:
+        print(
+            f"\n  WARNING: these member pairs are too close to leave a usable quiet\n"
+            f"  zone between them, and may fail to detect: {too_close}\n"
+            "  Space them further apart in config.yaml."
+        )
+
+    out_dir = resolve_path(args.out)
+    out_path = out_dir / f"tool_{geometry.name.replace(' ', '_').lower()}.png"
+    info = generate_tool_sheet(cfg, geometry, out_path)
+
+    print("\nTool sheet")
+    print("-" * 60)
+    print(f"  file        : {out_path}")
+    print(f"  image       : {info['pixels'][0]} x {info['pixels'][1]} px @ {info['dpi']} dpi")
+    print(f"  printed size: {info['sheet_mm'][0]:.1f} x {info['sheet_mm'][1]:.1f} mm")
+    print(f"  marker      : {info['marker_mm']:.2f} mm")
+
+    print(
+        """
+NEXT: print, then MEASURE -- the config millimetres are what make the pose metric.
+  1. Print at 100% / "Actual size". Turn OFF "Fit to page".
+  2. Measure the printed 100 mm scale bar. If it is not 100.0 mm, the page was
+     rescaled: every distance the tracker reports inherits that error.
+  3. Measure marker CENTRE-TO-CENTRE spacing and compare with the labels on the
+     sheet. Correct tool.markers x/y in config.yaml to what you measured.
+  4. Mount it FLAT and rigid. A tool that flexes is not a rigid body, and the
+     whole method assumes it is.
+"""
+    )
+    return 0
+
+
+def cmd_track_tool(args: argparse.Namespace) -> int:
+    from tracking.live import run_tool_tracking
+
+    cfg = _load(args)
+    run_tool_tracking(cfg)
+    return 0
+
+
+# --------------------------------------------------------------------------
 # not yet implemented
 # --------------------------------------------------------------------------
 
@@ -302,6 +360,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="override markers.marker_length_mm for this run",
     )
     p_track.set_defaults(func=cmd_track)
+
+    p_sheet = sub.add_parser(
+        "generate-tool-sheet",
+        help="render a print-ready sheet of the tool's markers at their configured positions",
+    )
+    p_sheet.add_argument("--out", default="output/print", help="output directory")
+    p_sheet.set_defaults(func=cmd_generate_tool_sheet)
+
+    p_tool = sub.add_parser(
+        "track-tool",
+        help="live rigid-body tool pose from all visible member markers (occlusion tolerant)",
+    )
+    p_tool.set_defaults(func=cmd_track_tool)
 
     for name, phase, desc in [
         ("pivot", 3, "tip offset from a pivot rotation, solved as a least-squares system"),

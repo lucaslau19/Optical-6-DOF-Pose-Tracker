@@ -74,9 +74,54 @@ calibration:
   # outliers (blurred, badly detected, or a mis-measured board).
   outlier_rms_px: 1.0
 
-# --- Phases 2-4: placeholders, filled in as those phases land ---------------
+# --- Phase 2: rigid-body tool -----------------------------------------------
+#
+# A "tool" is several ArUco markers rigidly fixed at KNOWN positions. Because
+# the geometry is known, every visible marker contributes 4 point
+# correspondences to ONE pose fit, so the tool keeps a pose when individual
+# markers are occluded -- which is the whole reason real optical navigation
+# tools (NDI Polaris, Intellijoint) use a cluster of fiducials rather than one.
+#
+# TOOL FRAME: X right, Y DOWN, Z into the sheet. Identical to the marker frame
+# convention (see tracking/single_marker.py), so a one-marker tool centred on
+# the origin reports exactly the pose that `track` reports for that marker.
+#
+# THESE MILLIMETRES ARE THE MEASUREMENT. `x`/`y` are the marker CENTRE in the
+# tool frame. Generate the sheet with `app.py generate-tool-sheet`, print it at
+# 100%, then measure centre-to-centre with a ruler and correct these numbers.
+# A 2 mm error here does not average out -- it biases the fitted pose.
+tool:
+  name: Pointer A
+  marker_length_mm: 30.0 # side of the black square of EVERY member marker
 
-tool: {} # rigid marker-cluster geometry (Phase 2), tip offset (Phase 3)
+  # Four markers at the corners of a 60 mm square, origin at the centroid.
+  # Putting the origin at the centroid rather than on a marker keeps the drawn
+  # axes in the middle of the tool and gives Phase 3's tip offset a sensible
+  # datum.
+  markers:
+    - { id: 10, x: -30.0, y: -30.0, z: 0.0 }
+    - { id: 11, x: 30.0, y: -30.0, z: 0.0 }
+    - { id: 12, x: -30.0, y: 30.0, z: 0.0 }
+    - { id: 13, x: 30.0, y: 30.0, z: 0.0 }
+  # Each member also accepts an optional in-plane `rotation_deg` about the tool
+  # +Z axis (default 0). Because +Z points INTO the sheet, a positive angle
+  # appears CLOCKWISE when you look at the printed page. Leave it at 0 unless
+  # you deliberately print a marker rotated.
+  #
+  # `z` is already honoured, so a non-coplanar tool (markers on a folded
+  # bracket) works today -- and is strictly better conditioned; see the
+  # ambiguity note in tracking/rigid_body.py. The default sheet is coplanar
+  # only because it prints on one flat page.
+
+  min_markers: 1 # fewer visible than this -> tool reported LOST
+  low_confidence_markers: 1 # at or below this many -> pose flagged low-confidence
+  max_reprojection_rms_px: 2.0 # above this -> HUD warns that the fit is poor
+
+  sheet: # print-ready layout produced by `generate-tool-sheet`
+    render_dpi: 300
+    margin_mm: 18.0
+
+# --- Phases 3-4: placeholders, filled in as those phases land ---------------
 
 navigation: {} # reference marker ID, target definition (Phase 4)
 

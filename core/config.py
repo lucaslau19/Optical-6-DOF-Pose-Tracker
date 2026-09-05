@@ -8,6 +8,7 @@ time instead of silently producing `None` three modules later.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -133,15 +134,94 @@ class CalibrationConfig:
 
 
 @dataclass
+class ToolMemberConfig:
+    """One marker of a rigid tool, as written in config.yaml."""
+
+    marker_id: int
+    x: float
+    y: float
+    z: float
+    rotation_deg: float = 0.0
+
+
+@dataclass
+class ToolSheetConfig:
+    render_dpi: int = 300
+    margin_mm: float = 18.0
+
+
+@dataclass
+class ToolConfig:
+    name: str
+    marker_length_mm: float
+    members: list[ToolMemberConfig]
+    min_markers: int = 1
+    low_confidence_markers: int = 1
+    max_reprojection_rms_px: float = 2.0
+    sheet: ToolSheetConfig = field(default_factory=ToolSheetConfig)
+
+    def __post_init__(self) -> None:
+        if not self.members:
+            raise ValueError("config.yaml: tool.markers is empty -- a tool needs at least one marker")
+        if self.marker_length_mm <= 0:
+            raise ValueError("config.yaml: tool.marker_length_mm must be positive")
+
+        # A repeated ID is not a harmless typo: the detector reports each ID
+        # once, so a duplicate silently means one of the two positions is never
+        # used and the fit is quietly biased by the wrong geometry.
+        counts = Counter(m.marker_id for m in self.members)
+        duplicates = sorted(marker_id for marker_id, n in counts.items() if n > 1)
+        if duplicates:
+            raise ValueError(f"config.yaml: tool.markers has duplicate id(s) {duplicates}")
+
+    @staticmethod
+    def from_dict(d: dict[str, Any]) -> "ToolConfig | None":
+        # An absent or empty `tool:` section is legitimate -- Phase 1 commands
+        # do not need one. The tool commands raise their own clear error.
+        if not d:
+            return None
+
+        members: list[ToolMemberConfig] = []
+        for i, raw in enumerate(d.get("markers") or []):
+            if "id" not in raw:
+                raise KeyError(f"config.yaml: tool.markers[{i}] is missing 'id'")
+            members.append(
+                ToolMemberConfig(
+                    marker_id=int(raw["id"]),
+                    x=float(_require(raw, "x", f"tool.markers[{i}]")),
+                    y=float(_require(raw, "y", f"tool.markers[{i}]")),
+                    z=float(raw.get("z", 0.0)),
+                    rotation_deg=float(raw.get("rotation_deg", 0.0)),
+                )
+            )
+
+        sheet_raw = d.get("sheet") or {}
+        return ToolConfig(
+            name=str(d.get("name", "tool")),
+            marker_length_mm=float(_require(d, "marker_length_mm", "tool")),
+            members=members,
+            min_markers=int(d.get("min_markers", 1)),
+            low_confidence_markers=int(d.get("low_confidence_markers", 1)),
+            max_reprojection_rms_px=float(d.get("max_reprojection_rms_px", 2.0)),
+            sheet=ToolSheetConfig(
+                render_dpi=int(sheet_raw.get("render_dpi", 300)),
+                margin_mm=float(sheet_raw.get("margin_mm", 18.0)),
+            ),
+        )
+
+
+@dataclass
 class Config:
     camera: CameraConfig
     aruco: ArucoConfig
     charuco: CharucoConfig
     markers: MarkersConfig
     calibration: CalibrationConfig
-    # Phases 2-4 are not parsed into dataclasses yet; keep the raw dicts so
+    # None when config.yaml has no `tool:` section -- Phase 1 commands do not
+    # need one, and the tool commands raise their own explanatory error.
+    tool: ToolConfig | None = None
+    # Phases 3-4 are not parsed into dataclasses yet; keep the raw dicts so
     # the file round-trips and nothing is silently dropped.
-    tool: dict[str, Any] = field(default_factory=dict)
     navigation: dict[str, Any] = field(default_factory=dict)
     tolerances: dict[str, Any] = field(default_factory=dict)
 
@@ -169,7 +249,7 @@ def load_config(path: str | Path | None = None) -> Config:
         charuco=CharucoConfig.from_dict(raw.get("charuco", {})),
         markers=MarkersConfig.from_dict(raw.get("markers", {})),
         calibration=CalibrationConfig.from_dict(raw.get("calibration", {})),
-        tool=raw.get("tool") or {},
+        tool=ToolConfig.from_dict(raw.get("tool") or {}),
         navigation=raw.get("navigation") or {},
         tolerances=raw.get("tolerances") or {},
         source_path=cfg_path,

@@ -5,8 +5,10 @@ navigation system is built: calibrate the camera, track a rigid tool, calibrate
 its tip, express everything relative to a patient reference frame, guide to a
 target — and then **measure how accurate it actually is**.
 
-> **Status: Phase 1 complete.** Camera calibration and live single-marker 6-DOF
-> pose are working. Phases 2–5 are described in the roadmap below.
+> **Status: Phases 1–2 complete.** Camera calibration, single-marker 6-DOF pose,
+> and occlusion-tolerant rigid-body tool tracking are working. Phases 3–5 are
+> described in the roadmap below. Acceptance steps live in
+> [TESTING.md](TESTING.md).
 
 <!-- DEMO GIF GOES HERE
      Suggested: ~8 s loop of `python app.py track` showing the drawn axes
@@ -90,6 +92,9 @@ python app.py generate-markers      # writes printable PNGs to output/print/
 #   ... print them at 100% scale, measure, update config.yaml ...
 python app.py calibrate             # live ChArUco capture -> output/camera_intrinsics.yaml
 python app.py track                 # live 6-DOF pose with drawn axes
+
+python app.py generate-tool-sheet   # print-ready rigid-tool marker sheet
+python app.py track-tool            # one pose for the whole tool, survives occlusion
 ```
 
 ### 1. Generate and print the targets
@@ -202,6 +207,55 @@ properly. Phase 1 at least measures it.
 
 ---
 
+### 4. Track a rigid tool (Phase 2)
+
+```bash
+python app.py generate-tool-sheet   # sheet built FROM config.yaml
+python app.py track-tool
+```
+
+A **tool** is several markers rigidly fixed at known positions
+([config.yaml](config.yaml) `tool:`). Every visible member contributes four
+3D↔2D correspondences, and they are concatenated into **one** `solvePnP`:
+
+```
+  corners of marker 10  ->  4 points
+  corners of marker 11  ->  4 points     all in the TOOL frame
+  corners of marker 13  ->  4 points
+  ---------------------------------
+  12 correspondences  ->  solvePnP  ->  T_cam_tool
+```
+
+This is deliberately *not* "estimate each marker's pose and average them".
+Averaging rotations is ill-defined, weights a badly-conditioned marker the same
+as a good one, and discards the fact that the markers constrain each other. One
+fit over all points minimises a single reprojection cost and uses the whole
+rigid body as evidence.
+
+**Why the pose survives occlusion.** Nothing is re-initialised when a marker
+disappears — the correspondence set just gets shorter. With 3 of 4 markers
+visible there are still 12 equations for 6 unknowns, so the fit barely moves.
+There is deliberately **no temporal filter**: a filter would hide precisely the
+behaviour this phase exists to demonstrate.
+
+The HUD makes it visible. Detected members outline green; hidden ones are drawn
+as **amber predicted outlines** from the fitted pose, so when you cover a marker
+its ghost stays sitting on top of it. A dot at the tool origin is the easiest
+thing to judge stability on.
+
+Also shown: markers used (`k / 4`), reprojection RMS in px, and a **per-marker
+RMS** — an outlier there means that member's configured position disagrees with
+where the camera sees it, which turns "the pose is a bit off" into "member 13 is
+wrong". Note every residual rises when one member is wrong, since the fit is
+pulled; read the worst as the suspect.
+
+**Honest caveat:** a coplanar tool (markers on one flat sheet) *still* has the
+two-fold planar ambiguity from Phase 1 — much better conditioned, because the
+points span far more image area, but not eliminated. Only a **non-coplanar**
+arrangement removes it. `z` is already honoured in the tool config, so mounting
+two markers on a raised step works today. This is exactly why real tracked
+instruments are not flat.
+
 ## Repository layout
 
 | Path | What lives there |
@@ -214,10 +268,14 @@ properly. Phase 1 at least measures it.
 | [markers/generate.py](markers/generate.py) | print-ready ChArUco board + ArUco marker PNGs |
 | [calibration/charuco.py](calibration/charuco.py) | ChArUco detection, `calibrateCamera`, per-view residuals |
 | [calibration/capture.py](calibration/capture.py) | live capture loop and offline re-fit |
+| [markers/tool.py](markers/tool.py) | rigid tool geometry: configured centres → 3D corner points |
+| [markers/tool_sheet.py](markers/tool_sheet.py) | print-ready tool sheet generated from the same config the tracker uses |
 | [tracking/single_marker.py](tracking/single_marker.py) | `solvePnP` pose + planar-ambiguity metric |
-| [tracking/live.py](tracking/live.py), [tracking/overlay.py](tracking/overlay.py) | live tracking loop and pose overlay |
+| [tracking/rigid_body.py](tracking/rigid_body.py) | **one** `solvePnP` over all visible member corners |
+| [tracking/live.py](tracking/live.py), [tracking/overlay.py](tracking/overlay.py) | live tracking loops and pose overlays |
 | [app.py](app.py) | CLI entry point |
 | [config.yaml](config.yaml) | all geometry, camera and tolerance settings |
+| [TESTING.md](TESTING.md) | per-phase acceptance steps |
 
 ---
 
@@ -226,7 +284,7 @@ properly. Phase 1 at least measures it.
 | Phase | Scope | Status |
 |---|---|---|
 | **1** | Scaffolding, ChArUco board generation, camera calibration, single-marker 6-DOF pose | ✅ done |
-| **2** | Rigid-body tool tracking: coplanar marker cluster with known geometry, one `solvePnP` over all visible corners, robust to partial occlusion | planned |
+| **2** | Rigid-body tool tracking: marker cluster with known geometry, one `solvePnP` over all visible corners, robust to partial occlusion | ✅ done |
 | **3** | Pivot calibration: solve the tip offset from `[R_i \| -I][p_tip; p_pivot] = -t_i` by least squares over all frames, report residual RMS | planned |
 | **4** | Patient reference frame (`T_ref_tool = T_cam_ref⁻¹ · T_cam_tool`), target point/axis, live distance and angular-deviation HUD with tolerance feedback | planned |
 | **5** | Accuracy characterisation: static jitter (std over N frames) and point accuracy (RMS in mm against a known grid), plus results write-up | planned |
@@ -302,5 +360,3 @@ nonsense.
 
 Python 3.10+, `opencv-contrib-python>=4.10,<5`, NumPy, SciPy, PyYAML — see
 [requirements.txt](requirements.txt).
-#   O p t i c a l - 6 - D O F - P o s e - T r a c k e r  
- 
