@@ -12,20 +12,34 @@ MARKER FRAME CONVENTION
 -----------------------
 `detectMarkers` returns the four corners in a fixed order -- top-left,
 top-right, bottom-right, bottom-left as seen in the marker's own upright
-orientation. Matching object points for a marker of side s:
+orientation.
 
-        (-s/2, +s/2, 0)   (+s/2, +s/2, 0)
-              +-----------------+          Y
-              |        ^ Y      |          ^
-              |        |        |          |
-              |        +--> X   |          +--> X      Z = X x Y, out of
-              |     (origin at  |                      the marker face,
-              |      centre)    |                      toward the camera.
+This project reports the marker frame as:
+
               +-----------------+
-        (-s/2, -s/2, 0)   (+s/2, -s/2, 0)
+              |        +--> X   |          X right
+              |        |        |          Y DOWN
+              |        v Y      |          Z INTO the marker face,
+              |     (origin at  |            i.e. away from the camera
+              |      centre)    |            (Z = X x Y)
+              +-----------------+
 
-so the pose returned is T_cam_marker, and its translation is the position of
-the marker's *centre* in camera coordinates.
+The pose returned is T_cam_marker, and its translation is the position of the
+marker's *centre* in camera coordinates.
+
+Why this and not OpenCV's default: with X right, Y DOWN, Z away, the marker
+frame is aligned with the CAMERA's own axis convention (OpenCV cameras are
+X right, Y down, Z forward into the scene). A marker held square-on to the
+camera therefore reads rpy = (0, 0, 0) rather than the (180, 0, 0) you get
+with the ArUco default -- much easier to sanity-check on a live HUD, and it
+means the tool frame in later phases does not carry a permanent 180 degree
+offset relative to the camera.
+
+NOTE this IS a deliberate deviation from cv2.aruco's own convention (X right,
+Y up, Z out of the face toward the camera), which is what the removed
+estimatePoseSingleMarkers produced. If you compare against an OpenCV tutorial
+and the Z axis points the other way, this is why. To go back to the ArUco
+convention, drop the `@ _IPPE_TO_MARKER` in `estimate_pose` below.
 
 THE PLANAR AMBIGUITY
 --------------------
@@ -51,6 +65,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from scipy.spatial.transform import Rotation
+
 from core.cv_compat import make_aruco_detector
 from core.intrinsics import CameraIntrinsics
 from core.transforms import SE3
@@ -62,11 +78,23 @@ AMBIGUITY_OK_RATIO = 3.0
 
 
 def marker_object_points(marker_length_mm: float) -> np.ndarray:
-    """The four marker corners in the marker's own frame, in mm.
+    """The four marker corners, in the ordering SOLVEPNP_IPPE_SQUARE demands.
 
-    Order matches cv2.aruco detectMarkers output. float32 because that is
-    what solvePnP expects; a float64 array here is a silent no-op on some
-    builds and a type error on others.
+    DO NOT "correct" the signs here to match this project's marker frame.
+    SOLVEPNP_IPPE_SQUARE is a closed-form solver specialised for a planar
+    square, and OpenCV documents that it requires exactly this layout --
+    X right, Y up, starting top-left and going clockwise:
+
+        [-s, +s, 0], [+s, +s, 0], [+s, -s, 0], [-s, -s, 0]
+
+    Feed it a Y-down ordering instead and the winding reverses, which is not
+    a convention difference the solver tolerates -- it can return a mirrored
+    or simply wrong solution. The project's own frame (Y down, Z into the
+    face) is applied *after* solving, via _IPPE_TO_MARKER.
+
+    Order also matches cv2.aruco detectMarkers output, so image and object
+    points correspond index-for-index. float32 because that is what solvePnP
+    expects.
     """
     s = float(marker_length_mm) / 2.0
     return np.array(
@@ -78,6 +106,19 @@ def marker_object_points(marker_length_mm: float) -> np.ndarray:
         ],
         dtype=np.float32,
     )
+
+
+# Converts a pose expressed in the IPPE/ArUco marker frame (X right, Y up,
+# Z out of the face) into this project's marker frame (X right, Y down,
+# Z into the face) -- a 180 degree rotation about X, with the origin unchanged
+# since both frames sit at the marker centre.
+#
+# Used as  T_cam_marker = T_cam_ippe @ T_ippe_marker,  which is the transform
+# chain from core/transforms.py doing exactly what it says: the adjacent
+# `ippe` frames cancel.
+_IPPE_TO_MARKER = SE3(
+    Rotation.from_euler("x", 180, degrees=True).as_matrix(), np.zeros(3)
+)
 
 
 @dataclass
@@ -145,7 +186,9 @@ def estimate_pose(
         raise RuntimeError("solvePnP found no solution for a detected marker")
 
     # solvePnPGeneric returns solutions sorted by reprojection error, best first.
-    pose = SE3.from_rvec_tvec(rvecs[0], tvecs[0])
+    # The result is in the IPPE/ArUco marker frame; convert to this project's
+    # frame (Y down, Z into the marker face) -- see the module docstring.
+    pose = SE3.from_rvec_tvec(rvecs[0], tvecs[0]) @ _IPPE_TO_MARKER
 
     err = np.asarray(errors, dtype=float).ravel()
     best = float(err[0])

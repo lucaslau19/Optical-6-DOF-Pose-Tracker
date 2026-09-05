@@ -72,7 +72,8 @@ def run_single_marker_tracking(cfg: Config, *, marker_length_mm: float | None = 
     print(intrinsics.summary())
     print(f"\nTracking {cfg.aruco.dictionary} markers, {length:.1f} mm side.")
     print("Pose is T_cam_marker: translation is the marker centre in camera coordinates.")
-    print("Axes drawn on each marker: X red, Y green, Z blue (Z out of the marker face).")
+    print("Axes drawn on each marker: X red (right), Y green (down), Z blue (into the face).")
+    print("A marker held square-on to the camera reads rpy ~ (0, 0, 0).")
     print("Keys: q quit | p force a pose print\n")
 
     fps = _FpsMeter()

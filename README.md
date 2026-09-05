@@ -161,9 +161,26 @@ python app.py track
 python app.py track --marker-size 30    # override the configured marker size
 ```
 
-Draws each marker's frame — **X red, Y green, Z blue**, with Z out of the marker
-face toward the camera — and prints the 6-DOF pose to the console. `q` quits,
-`p` forces a print.
+Draws each marker's frame — **X red (right), Y green (down), Z blue (into the
+marker face, away from the camera)** — and shows the full 6-DOF pose both as an
+on-screen readout and on the console. `q` quits, `p` forces a print.
+
+The axes tilt in 3D with the marker: held square-on, blue is a dot at the centre
+and the pose reads `rpy ≈ (0, 0, 0)`; tilt the marker and blue swings away from
+you.
+
+That frame — X right, Y down, Z away — matches the **camera's** own axis
+convention, which is why a square-on marker reads zero rather than 180°. It is a
+deliberate deviation from `cv2.aruco`'s default (X right, Y up, Z *toward* the
+camera). If you compare against an OpenCV tutorial and Z points the other way,
+that is why; [tracking/single_marker.py](tracking/single_marker.py) documents the
+one-line revert.
+
+Note that `SOLVEPNP_IPPE_SQUARE` *requires* OpenCV's object-point ordering, so
+the solve happens in the ArUco frame and the result is converted afterwards
+(`T_cam_marker = T_cam_ippe @ T_ippe_marker`) rather than by re-signing the
+object points — doing the latter reverses the winding and the solver can return
+a mirrored solution.
 
 The readout includes two quality numbers per marker:
 
@@ -285,3 +302,5 @@ nonsense.
 
 Python 3.10+, `opencv-contrib-python>=4.10,<5`, NumPy, SciPy, PyYAML — see
 [requirements.txt](requirements.txt).
+#   O p t i c a l - 6 - D O F - P o s e - T r a c k e r  
+ 

@@ -23,9 +23,11 @@ def draw_marker_axes(
     pinhole projection instead and they will visibly miss the marker near the
     frame edges, which looks like a pose error but is a drawing error.
 
-    Z pointing out of the marker face towards the camera is the quickest
-    visual confirmation that the pose has not flipped to the ambiguous
-    solution.
+    Z points INTO the marker face (away from the camera), so on a marker held
+    square-on the blue axis is a dot at the centre, and it swings away from
+    the viewer as the marker tilts. If blue ever swings towards you instead,
+    the pose has flipped to the ambiguous solution -- the quickest visual
+    check there is.
     """
     rvec, tvec = marker.pose.as_rvec_tvec()
     cv2.drawFrameAxes(
