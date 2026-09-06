@@ -37,37 +37,6 @@ that underpins them, and the error budget.
                         known geometry ───────────────────┴─► accuracy, mm [Phase 5]
 ```
 
-### Conventions
-
-One convention, used everywhere, documented in full at the top of
-[core/transforms.py](core/transforms.py):
-
-- **`T_a_b` maps points in frame b into frame a**, so `p_a = T_a_b @ p_b`, and
-  chains cancel: `T_a_c = T_a_b @ T_b_c`.
-- An object's *pose* is the transform out of its own frame into the observer's,
-  so a marker's pose in the camera is `T_cam_marker` — and its translation is
-  literally the marker centre in camera coordinates. This is exactly what
-  `cv2.solvePnP` returns.
-- **Millimetres and degrees**, everywhere. Marker geometry is specified in mm,
-  so `solvePnP` returns translations in mm with no conversion step.
-
-### OpenCV API note
-
-The `cv2.aruco` API was restructured in **OpenCV 4.7**, and
-`estimatePoseSingleMarkers` was **removed in 4.9**. Most tutorials online still
-use the old API. This project uses the current classes throughout —
-`ArucoDetector`, `CharucoDetector`, the `(x, y)`-tuple `CharucoBoard`
-constructor, `CharucoBoard.matchImagePoints` — and does pose estimation with
-`cv2.solvePnP` over **explicit 3D object points**.
-
-That last choice is not just compliance with the new API. Explicit object points
-are what make Phase 2 a small extension rather than a rewrite: a rigid tool is
-just a longer object-point array fed to the same solver. All version-sensitive
-construction is isolated in [core/cv_compat.py](core/cv_compat.py), which fails
-with an actionable message on an old or non-contrib install.
-
----
-
 ## Quick start
 
 ```bash
