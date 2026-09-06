@@ -554,25 +554,6 @@ clinical navigation system requires.
 
 ---
 
-## Demo GIF
-
-A 45–60 s screen capture, recorded with [ScreenToGif](https://www.screentogif.com)
-or OBS, dropped in as `docs/demo.gif`. Shoot the terminal and the OpenCV window
-side by side so the numbers are readable. Suggested beats:
-
-| Time | Command | Show |
-|---|---|---|
-| 0–8 s | `calibrate --auto` | board moving, coverage grid filling, final RMS |
-| 8–16 s | `track` | axes on a single marker, tilt it, `rpy ≈ 0` head-on |
-| 16–26 s | `track-tool` | **cover markers with your hand** — axes stay put, amber ghost outlines hold position, `markers used` counts down |
-| 26–34 s | `pivot` | precessing the tool, orientation wheel filling into a ring, final tip + residual |
-| 34–46 s | `navigate` | **pick the camera up and move it** — `tip in CAM` scrolling while `tip in REF` sits still |
-| 46–58 s | `navigate` | bring the tip to the target, distance banner counting down and flipping **green** |
-
-The two moments that sell it are the occlusion hold (16–26 s) and the camera
-move (34–46 s) — those are the ones that look like a real navigation system
-rather than a marker demo. Give each a few seconds to land.
-
 ## Requirements
 
 Python 3.10+, `opencv-contrib-python` 4.10–4.x (contrib, not plain
