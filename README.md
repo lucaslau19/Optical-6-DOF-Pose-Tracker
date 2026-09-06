@@ -10,7 +10,7 @@ target — and then **measure how accurate it actually is**.
 
 ## The problem
 
-Surgical navigation answers one question continuously: **where is the
+After my work at Intellijoint Surgical I realized surgical navigation answers one question continuously: **where is the
 instrument, relative to the patient?** Optical systems answer it by watching
 retro-reflective or printed fiducials with a calibrated camera and solving for
 pose.
