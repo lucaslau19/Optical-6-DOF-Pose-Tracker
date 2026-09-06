@@ -226,3 +226,48 @@ tolerances:
   offset_mm: 2.0 # perpendicular offset from the target axis
   angle_deg: 5.0 # angular deviation of the tool axis from the target axis
   warn_factor: 2.0
+
+# --- Phase 5: accuracy characterisation --------------------------------------
+#
+# Four metrics measuring two different things. PRECISION (jitter,
+# repeatability) needs no ground truth and says how tightly repeated
+# measurements agree with each other. TRUENESS (distance, registration) needs
+# ground truth and says how close they are to reality. A system can be
+# beautifully precise and completely untrue -- if the printed geometry is 2%
+# small, every measurement is consistently 2% short and the repeatability
+# looks superb. See accuracy/stats.py.
+accuracy:
+  results_dir: results
+
+  # 1. STATIC JITTER -- frames to collect with everything held still.
+  jitter_frames: 500
+
+  # 2. POINT REPEATABILITY -- how many times to touch the SAME divot, from
+  #    deliberately varied tool angles.
+  repeatability_touches: 10
+
+  # 3. DISTANCE ACCURACY -- the true separations you will digitise, in mm.
+  #    Use ruler graduations, a caliper setting, or two drilled holes. Override
+  #    at the command line with `--true-mm 50 --pairs 5`.
+  distance_pairs_mm: [50.0, 100.0, 150.0]
+
+  # 4. REGISTRATION -- landmark coordinates in their OWN frame (a printed
+  #    grid's coordinates, say). You digitise them in this order and a rigid
+  #    transform is fitted; the residual is the closest analogue to a real
+  #    navigation accuracy spec. A printed grid is coplanar, which constrains
+  #    the out-of-plane direction only weakly -- adding points at a known
+  #    height gives a meaningfully stronger check.
+  registration_points_mm:
+    - [0.0, 0.0, 0.0]
+    - [40.0, 0.0, 0.0]
+    - [80.0, 0.0, 0.0]
+    - [0.0, 40.0, 0.0]
+    - [40.0, 40.0, 0.0]
+    - [80.0, 40.0, 0.0]
+    - [0.0, 80.0, 0.0]
+    - [40.0, 80.0, 0.0]
+    - [80.0, 80.0, 0.0]
+
+  # Recorded with every result, because a number without its conditions is not
+  # a result. Override with `--lighting "..."`.
+  lighting_note: not recorded

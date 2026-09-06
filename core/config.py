@@ -323,6 +323,32 @@ class TolerancesConfig:
 
 
 @dataclass
+class AccuracyConfig:
+    results_dir: Path = REPO_ROOT / "results"
+    jitter_frames: int = 500
+    repeatability_touches: int = 10
+    distance_pairs_mm: list[float] = field(default_factory=lambda: [50.0, 100.0, 150.0])
+    registration_points_mm: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 3), dtype=float)
+    )
+    lighting_note: str = "not recorded"
+
+    @staticmethod
+    def from_dict(d: dict[str, Any]) -> "AccuracyConfig":
+        points = d.get("registration_points_mm") or []
+        return AccuracyConfig(
+            results_dir=resolve_path(d.get("results_dir", "results")),
+            jitter_frames=int(d.get("jitter_frames", 500)),
+            repeatability_touches=int(d.get("repeatability_touches", 10)),
+            distance_pairs_mm=[float(v) for v in (d.get("distance_pairs_mm") or [])],
+            registration_points_mm=np.asarray(points, dtype=float).reshape(-1, 3)
+            if len(points)
+            else np.zeros((0, 3), dtype=float),
+            lighting_note=str(d.get("lighting_note", "not recorded")),
+        )
+
+
+@dataclass
 class Config:
     camera: CameraConfig
     aruco: ArucoConfig
@@ -338,6 +364,7 @@ class Config:
     reference: ToolConfig | None = None
     navigation: NavigationConfig | None = None
     tolerances: TolerancesConfig = field(default_factory=TolerancesConfig)
+    accuracy: AccuracyConfig = field(default_factory=AccuracyConfig)
 
     source_path: Path = REPO_ROOT / "config.yaml"
 
@@ -368,5 +395,6 @@ def load_config(path: str | Path | None = None) -> Config:
         reference=ToolConfig.from_dict(raw.get("reference") or {}),
         navigation=NavigationConfig.from_dict(raw.get("navigation") or {}),
         tolerances=TolerancesConfig.from_dict(raw.get("tolerances") or {}),
+        accuracy=AccuracyConfig.from_dict(raw.get("accuracy") or {}),
         source_path=cfg_path,
     )

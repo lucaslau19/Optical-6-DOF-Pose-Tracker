@@ -386,6 +386,120 @@ Press `s` to save, or quit — points are written to
 
 ---
 
+## Phase 5 — accuracy characterisation
+
+Four metrics. They measure **two different things**, and conflating them is the
+most common way an accuracy claim misleads:
+
+| | Needs ground truth? | Answers |
+|---|---|---|
+| **Precision** (jitter, repeatability) | No | do repeated measurements agree with *each other*? |
+| **Trueness** (distance, registration) | Yes | do they agree with *reality*? |
+
+A system can be beautifully precise and completely untrue. If your printed
+geometry is 2% small, every measurement is consistently 2% short and the
+repeatability looks superb. **Quote the trueness figure as your accuracy.**
+
+Every run writes raw samples (`.csv`) and a summary with full conditions
+(`.yaml`) to `results/`.
+
+### P5.1 — Static jitter (precision)
+
+```powershell
+.venv\Scripts\python.exe app.py accuracy jitter --lighting "office fluorescent"
+```
+
+Clamp both bodies and the camera, take your hands off, press SPACE.
+
+| Check | Expected |
+|---|---|
+| 3D RMS | sub-mm; < 0.15 mm is excellent for this hardware |
+| Per-axis std | **z (depth) worst** — expected for a monocular system |
+| Orientation std | a fraction of a degree |
+| Ambiguous frames | ideally 0; if many, work closer/more obliquely |
+
+This is the most flattering number the project produces — nothing moves, so it
+excludes everything a real user does. It is reported first so the harder
+numbers can be compared against it.
+
+### P5.2 — Point repeatability (precision)
+
+```powershell
+.venv\Scripts\python.exe app.py accuracy repeatability --touches 10
+```
+
+Touch the **same divot** 10 times. **Lift the tool away and return from a
+different angle each time** — that variation is the whole point.
+
+**Expect this to be several times worse than static jitter.** It includes tip
+seating, approach angle and your hand. If it is *not* worse, the jitter run
+probably was not genuinely static — the report says so.
+
+### P5.3 — Distance accuracy (trueness)
+
+```powershell
+.venv\Scripts\python.exe app.py accuracy distance --true-mm 100 --pairs 5
+# or use the list in accuracy.distance_pairs_mm:
+.venv\Scripts\python.exe app.py accuracy distance
+```
+
+Digitise pairs of points a **known** distance apart — ruler graduations, a
+caliper setting, two drilled holes, or the 100 mm scale bar on your sheets.
+Touch A, SPACE, touch B, SPACE.
+
+The number to read is **mean SIGNED error**, not just the absolute error:
+
+| Signed mean | Means |
+|---|---|
+| ≈ 0, with scatter | random noise — nothing systematic to fix |
+| consistently + or − | **scale/geometry error** — averaging will never remove it |
+
+The report fits a scale factor and tells you the percentage. If it says you
+read 0.8% long, your printed geometry is 0.8% small: re-measure the marker size
+and centre-to-centre spacing, and check the ChArUco square used for calibration.
+
+Use a **range** of true distances (50/100/150 mm), not five copies of one — a
+scale error only separates from a constant offset if the lengths differ.
+
+### P5.4 — Registration residual (trueness)
+
+```powershell
+.venv\Scripts\python.exe app.py accuracy registration
+```
+
+Digitise the landmarks listed in `accuracy.registration_points_mm`, in order.
+A rigid transform is fitted from measured → known, and the residual is what
+remains. This is the closest analogue to a real navigation system's quoted
+accuracy: it is the part of the error that is **not** a rigid misalignment, and
+no better transform can reduce it.
+
+The report also fits a version *with* scale. A large drop means your geometry
+is mis-scaled rather than distorted — a different problem with a different fix.
+
+Note the default landmark set is **coplanar** (a printed grid), which
+constrains the out-of-plane direction only weakly — the same conditioning theme
+as the coplanar marker bodies. Adding landmarks at a known height makes this a
+meaningfully stronger check.
+
+### P5.5 — Headline
+
+```powershell
+.venv\Scripts\python.exe app.py accuracy headline
+```
+
+Aggregates the latest of each metric into a paragraph with its conditions
+attached, ready to paste into the README's Results section. Re-run any metric
+and re-run this.
+
+### What to record alongside the numbers
+
+The tooling captures resolution, working distance (measured during the run),
+marker size, calibration RMS and pivot residual automatically. Pass
+`--lighting "..."` so that goes in too. A number without its conditions is not
+a result.
+
+---
+
 ## Synthetic checks (no hardware)
 
 These run against rendered ground truth and validate the maths independently of
@@ -414,3 +528,10 @@ any printed target:
   a reversed tool reads 180°, not 0°.
 - Two points 40 mm apart, digitised from *different* camera poses, measure
   39.889 mm.
+- The accuracy statistics are checked against analytic cases: isotropic scatter
+  recovers σ√3, the rotation mean stays on SO(3) (no reflection), Kabsch
+  recovers a known transform exactly and refuses to fit mirrored data, and a
+  pure scale error is reported as a systematic bias rather than random noise.
+- Rotation deviations use `atan2(sin, cos)` rather than `arccos`, which is
+  ill-conditioned precisely in the sub-degree range this metric operates in
+  (`arccos` returns ~1e-6° for identical matrices; `atan2` returns 0).

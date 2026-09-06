@@ -5,11 +5,11 @@ navigation system is built: calibrate the camera, track a rigid tool, calibrate
 its tip, express everything relative to a patient reference frame, guide to a
 target — and then **measure how accurate it actually is**.
 
-> **Status: Phases 1–4 complete.** Camera calibration, single-marker 6-DOF pose,
-> occlusion-tolerant rigid-body tool tracking, pivot (tip) calibration, and
-> reference-relative navigation with target guidance are working. Phase 5
-> (accuracy characterisation) is described in the roadmap below. Acceptance
-> steps live in [TESTING.md](TESTING.md).
+> **Status: complete (Phases 1–5).** Camera calibration, single-marker 6-DOF
+> pose, occlusion-tolerant rigid-body tool tracking, pivot (tip) calibration,
+> reference-relative navigation with target guidance, and accuracy
+> characterisation. Measured numbers are in [Results](#results); per-phase
+> acceptance steps are in [TESTING.md](TESTING.md).
 
 <!-- DEMO GIF GOES HERE
      Suggested: ~8 s loop of `python app.py track` showing the drawn axes
@@ -398,6 +398,11 @@ ambiguous.
 | [navigation/guidance.py](navigation/guidance.py) | distance, perpendicular offset, angular deviation, tolerance bands |
 | [navigation/overlay.py](navigation/overlay.py), [navigation/live.py](navigation/live.py) | navigation HUD and live loop |
 | [navigation/digitize.py](navigation/digitize.py) | digitised points and pairwise distances |
+| [accuracy/stats.py](accuracy/stats.py) | scatter, rotation means, distance trueness, Kabsch — pure maths, unit-tested |
+| [accuracy/jitter.py](accuracy/jitter.py), [accuracy/points.py](accuracy/points.py) | the four measurement procedures |
+| [accuracy/session.py](accuracy/session.py) | raw-sample CSV + summary YAML with recorded conditions |
+| [accuracy/headline.py](accuracy/headline.py) | aggregates the latest results into one citable paragraph |
+| [assets/](assets/) | committed print-ready ChArUco board, tool and reference sheets |
 | [tracking/live.py](tracking/live.py), [tracking/overlay.py](tracking/overlay.py) | live tracking loops and pose overlays |
 | [app.py](app.py) | CLI entry point |
 | [config.yaml](config.yaml) | all geometry, camera and tolerance settings |
@@ -413,26 +418,71 @@ ambiguous.
 | **2** | Rigid-body tool tracking: marker cluster with known geometry, one `solvePnP` over all visible corners, robust to partial occlusion | ✅ done |
 | **3** | Pivot calibration: solve the tip offset from `[R_i \| -I][p_tip; p_pivot] = -t_i` by least squares over all frames, report residual RMS | ✅ done |
 | **4** | Patient reference frame (`T_ref_tool = T_cam_ref⁻¹ · T_cam_tool`), target point/axis, live distance and angular-deviation HUD with tolerance feedback | ✅ done |
-| **5** | Accuracy characterisation: static jitter (std over N frames) and point accuracy (RMS in mm against a known grid), plus results write-up | planned |
+| **5** | Accuracy characterisation: precision (jitter, repeatability) and trueness (distance, registration), with raw data and conditions recorded | ✅ done |
+
+---
+
+### 7. Characterise the accuracy (Phase 5)
+
+```bash
+python app.py accuracy jitter --lighting "office fluorescent"
+python app.py accuracy repeatability --touches 10
+python app.py accuracy distance --true-mm 100 --pairs 5
+python app.py accuracy registration
+python app.py accuracy headline
+```
+
+Four metrics, measuring **two different things**:
+
+| | Ground truth? | Answers |
+|---|---|---|
+| **Precision** — static jitter, touch repeatability | not needed | do repeated measurements agree with *each other*? |
+| **Trueness** — distance error, registration residual | required | do they agree with *reality*? |
+
+The distinction is the point. A system can be beautifully precise and
+completely untrue: if the printed geometry is 2% small, every measurement is
+consistently 2% short and the repeatability looks *superb*. So the distance
+metric reports the **mean signed error** separately from the mean absolute
+error — a consistent sign is the signature of a scale error, and no amount of
+averaging removes it. The report fits a scale factor and names the percentage.
+
+Each run writes raw samples (`.csv`) and a summary (`.yaml`) to `results/`,
+including the conditions: resolution, working distance measured during the run,
+marker size, calibration RMS, pivot residual and a lighting note. A number
+without its conditions is not a result.
+
+`registration` is the closest analogue to a real navigation system's quoted
+accuracy — digitise landmarks with known coordinates, fit one rigid transform
+(Kabsch), and report what is left over. That residual cannot be reduced by
+choosing a better transform; it is the genuine distortion of the measurement.
 
 ---
 
 ## Results
 
-<!-- Fill in after Phase 5. Suggested table:
-
-| Metric | Result | Conditions |
-|---|---|---|
-| Calibration reprojection RMS | _x.xx px_ | N views, 1280x720 |
-| Static positional jitter (1σ) | _x.xx mm_ | 300 frames, tool at 400 mm |
-| Static angular jitter (1σ) | _x.xx °_ | 300 frames, tool at 400 mm |
-| Tip point accuracy (RMS) | _x.xx mm_ | N grid points, 250–600 mm range |
-| Pivot calibration residual | _x.xx mm_ | N frames |
+<!--
+  Run `python app.py accuracy headline` and paste its paragraph here.
+  Fill the table from the same output. Leave the method column intact --
+  the conditions are what make the numbers mean anything.
 -->
 
-_To be measured in Phase 5._ The numbers that matter for a navigation system are
-tip **accuracy** (RMS against known geometry) and **jitter** (repeatability at
-rest) — not the calibration residual, which only reports self-consistency.
+| Metric | Type | Result | Method |
+|---|---|---|---|
+| Calibration reprojection RMS | self-consistency | _x.xxx px_ | N ChArUco views, 1280×720 |
+| Pivot (tip) residual | self-consistency | _x.xx mm_ | N poses, cone ≥30° |
+| **Static jitter** | precision | _x.xx mm RMS_ | 500 frames, everything static |
+| **Touch repeatability** | precision | _x.xx mm RMS_ | 10 touches of one divot, varied angles |
+| **Distance error** | **trueness** | _x.xx mm RMS_ | N pairs at 50/100/150 mm known |
+| **Registration residual** | **trueness** | _x.xx mm RMS_ | 9 landmarks, rigid Kabsch fit |
+
+_Conditions: 1280×720 webcam, xxx–xxx mm working distance, 30 mm markers,
+calibration x.xxx px RMS, <lighting note>._
+
+**Quote the trueness figures as the accuracy.** The precision numbers are the
+noise floor, not the error — they would be flattered by any systematic problem
+in the chain. For scale: a commercial infrared tracker (NDI Polaris) quotes
+~0.25 mm RMS volumetric accuracy, with a stereo IR camera and machined
+retro-reflective spheres rather than one webcam and printed paper.
 
 ## Troubleshooting the camera
 
@@ -469,20 +519,77 @@ and stream at 640×480 and every pose is wrong by roughly 2× with no error
 anywhere. `track` refuses to run on a mismatch rather than producing plausible
 nonsense.
 
-## Known limitations
+## Limitations & future work
 
-- **Monocular.** Depth comes entirely from the known physical size of the
-  fiducials, so any error in the printed marker size scales the whole depth
-  estimate. A stereo rig would not have this dependency.
-- **Planar ambiguity** on single markers (see above); addressed in Phase 2.
-- **Rolling shutter.** Most webcams distort fast motion; poses during rapid
-  movement are less trustworthy than static ones, which is one reason accuracy
-  is characterised statically.
-- **Printed paper fiducials** are not sterile, not retro-reflective, and are
-  sensitive to lighting and specular glare. This is a demonstrator of the
-  *mathematics and workflow*, not a clinical device.
+Stated plainly, because knowing what a measurement *doesn't* cover is most of
+what makes it trustworthy.
+
+**Monocular.** Depth comes entirely from the known physical size of the
+fiducials, so any error in the printed geometry scales the whole depth estimate
+— and depth is consistently the worst axis. This is why the project is so
+insistent about printing at 100% and re-measuring, and why the distance metric
+separates signed from absolute error. *Future work:* a stereo pair would make
+depth a triangulation rather than a scale inference.
+
+**Coplanar marker bodies.** Both the tool and the reference are flat printed
+sheets, so both retain the two-fold planar pose ambiguity — much better
+conditioned than a single marker because the points span more image area, but
+not eliminated. It bites at long range and near-fronto-parallel views, and the
+HUD flags it. The reference is the more dangerous case: it sits still and looks
+reassuringly stable while being what everything else is measured against.
+*Future work:* mount markers on a folded bracket. `z` is already honoured in the
+config, so this needs no code change.
+
+**No temporal filtering, deliberately.** There is no Kalman filter or smoothing
+anywhere. A filter would improve the jitter number and hide exactly the
+behaviour the occlusion and camera-independence tests exist to demonstrate.
+Every reported pose is an independent fit to that frame's data. *Future work:*
+a filter is easy to add once you can measure what it costs — but measure first.
+
+**Rolling shutter.** Most webcams skew fast motion, so poses during rapid
+movement are less trustworthy than static ones. All accuracy characterisation
+here is static, which is a real limitation of the numbers, not just of the
+hardware. *Future work:* a global-shutter camera, and a dynamic-accuracy metric.
+
+**Lighting and print quality.** Paper fiducials are sensitive to specular glare,
+shadow and motion blur. Matte paper and diffuse light matter more than they
+should. Results record a lighting note for this reason.
+
+**Single tool, single reference.** No tool-swapping, no multi-instrument
+tracking, no verification divot to detect a bent instrument mid-procedure — all
+of which a real system has.
+
+**Not a medical device.** This is a demonstrator of the mathematics and the
+workflow. Paper fiducials are not sterile, not retro-reflective, and this code
+has none of the verification, risk management or fault detection that a
+clinical navigation system requires.
+
+---
+
+## Demo GIF
+
+A 45–60 s screen capture, recorded with [ScreenToGif](https://www.screentogif.com)
+or OBS, dropped in as `docs/demo.gif`. Shoot the terminal and the OpenCV window
+side by side so the numbers are readable. Suggested beats:
+
+| Time | Command | Show |
+|---|---|---|
+| 0–8 s | `calibrate --auto` | board moving, coverage grid filling, final RMS |
+| 8–16 s | `track` | axes on a single marker, tilt it, `rpy ≈ 0` head-on |
+| 16–26 s | `track-tool` | **cover markers with your hand** — axes stay put, amber ghost outlines hold position, `markers used` counts down |
+| 26–34 s | `pivot` | precessing the tool, orientation wheel filling into a ring, final tip + residual |
+| 34–46 s | `navigate` | **pick the camera up and move it** — `tip in CAM` scrolling while `tip in REF` sits still |
+| 46–58 s | `navigate` | bring the tip to the target, distance banner counting down and flipping **green** |
+
+The two moments that sell it are the occlusion hold (16–26 s) and the camera
+move (34–46 s) — those are the ones that look like a real navigation system
+rather than a marker demo. Give each a few seconds to land.
 
 ## Requirements
 
-Python 3.10+, `opencv-contrib-python>=4.10,<5`, NumPy, SciPy, PyYAML — see
+Python 3.10+, `opencv-contrib-python` 4.10–4.x (contrib, not plain
+`opencv-python`), NumPy, SciPy, PyYAML. Exact tested versions are pinned in
 [requirements.txt](requirements.txt).
+
+Print-ready targets are committed in [assets/](assets/) so you can print and try
+the project before running anything.

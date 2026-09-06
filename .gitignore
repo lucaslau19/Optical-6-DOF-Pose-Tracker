@@ -7,8 +7,17 @@ env/
 .idea/
 .DS_Store
 
-# Generated artefacts: printable targets, captured calibration frames, and
-# the fitted intrinsics. All reproducible from the CLI, and the intrinsics in
-# particular are specific to one physical camera -- committing someone else's
-# would be worse than having none.
+# Generated artefacts: printable targets, captured calibration frames, fitted
+# intrinsics, tip calibration. All reproducible from the CLI, and the
+# intrinsics in particular are specific to one physical camera -- committing
+# someone else's would be worse than having none.
+#
+# Print-ready targets that ARE committed live in assets/, generated once so a
+# reader can print and try the project without running anything first.
 output/
+
+# Accuracy measurements. These describe one person's camera, print and
+# lighting, so they are evidence rather than source: the headline numbers get
+# quoted in the README instead. Force-add a specific run with
+# `git add -f results/<file>` if you want to publish the raw data.
+results/

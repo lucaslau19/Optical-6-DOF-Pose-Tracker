@@ -9,7 +9,11 @@
     python app.py track-tool           # live rigid-body tool pose (occlusion tolerant)
     python app.py pivot                # pivot (tip) calibration -> tip offset
     python app.py navigate             # reference-relative pose + target guidance
-    python app.py accuracy             # (Phase 5) jitter + point accuracy
+    python app.py accuracy jitter      # precision: static jitter
+    python app.py accuracy repeatability  # precision: repeated touches of one point
+    python app.py accuracy distance    # trueness: measured vs known separations
+    python app.py accuracy registration   # trueness: rigid fit to known landmarks
+    python app.py accuracy headline    # aggregate the latest results
 
 Run `python app.py <command> --help` for per-command options.
 """
@@ -382,16 +386,40 @@ def cmd_navigate(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
-# not yet implemented
+# accuracy   (Phase 5)
 # --------------------------------------------------------------------------
 
 
-def _not_yet(phase: int, name: str, description: str):
-    def _cmd(args: argparse.Namespace) -> int:
-        print(f"`{name}` arrives in Phase {phase}: {description}")
-        return 2
+def cmd_accuracy(args: argparse.Namespace) -> int:
+    cfg = _load(args)
+    lighting = getattr(args, "lighting", None)
 
-    return _cmd
+    if args.accuracy_command == "jitter":
+        from accuracy.jitter import run_jitter
+
+        return run_jitter(cfg, frames=args.frames, lighting=lighting)
+
+    if args.accuracy_command == "repeatability":
+        from accuracy.points import run_repeatability
+
+        return run_repeatability(cfg, touches=args.touches, lighting=lighting)
+
+    if args.accuracy_command == "distance":
+        from accuracy.points import run_distance
+
+        return run_distance(cfg, true_mm=args.true_mm, pairs=args.pairs, lighting=lighting)
+
+    if args.accuracy_command == "registration":
+        from accuracy.points import run_registration
+
+        return run_registration(cfg, lighting=lighting)
+
+    if args.accuracy_command == "headline":
+        from accuracy.headline import run_headline
+
+        return run_headline(cfg)
+
+    raise ValueError(f"unknown accuracy subcommand {args.accuracy_command!r}")
 
 
 # --------------------------------------------------------------------------
@@ -494,11 +522,58 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_nav.set_defaults(func=cmd_navigate)
 
-    for name, phase, desc in [
-        ("accuracy", 5, "static jitter and point accuracy against known geometry"),
-    ]:
-        p = sub.add_parser(name, help=f"(Phase {phase}) {desc}")
-        p.set_defaults(func=_not_yet(phase, name, desc))
+    p_acc = sub.add_parser(
+        "accuracy",
+        help="accuracy characterisation: jitter, repeatability, distance, registration",
+        description="Quantify precision (jitter, repeatability) and trueness "
+        "(distance, registration). Each run writes raw samples and a summary to "
+        "the results directory.",
+    )
+    acc_sub = p_acc.add_subparsers(dest="accuracy_command", required=True)
+
+    # --lighting belongs on each measurement subcommand, not on the group, so
+    # that the natural `accuracy jitter --lighting "..."` ordering works.
+    # Options placed on the group parser would have to precede the subcommand
+    # name, which nobody types.
+    lighting_opt = argparse.ArgumentParser(add_help=False)
+    lighting_opt.add_argument(
+        "--lighting",
+        default=None,
+        metavar="NOTE",
+        help='lighting description recorded with the result, e.g. "office fluorescent"',
+    )
+
+    a_jit = acc_sub.add_parser(
+        "jitter", parents=[lighting_opt], help="static jitter of a held pose (precision)"
+    )
+    a_jit.add_argument("--frames", type=int, default=None, help="frames to collect")
+
+    a_rep = acc_sub.add_parser(
+        "repeatability",
+        parents=[lighting_opt],
+        help="repeatability of touching one divot (precision)",
+    )
+    a_rep.add_argument("--touches", type=int, default=None, help="number of touches")
+
+    a_dist = acc_sub.add_parser(
+        "distance",
+        parents=[lighting_opt],
+        help="measured vs known point separations (trueness)",
+    )
+    a_dist.add_argument(
+        "--true-mm", type=float, default=None, metavar="MM",
+        help="true separation for every pair (overrides accuracy.distance_pairs_mm)",
+    )
+    a_dist.add_argument("--pairs", type=int, default=None, help="number of pairs")
+
+    acc_sub.add_parser(
+        "registration",
+        parents=[lighting_opt],
+        help="rigid fit to known landmarks, residual RMS (trueness)",
+    )
+    acc_sub.add_parser("headline", help="aggregate the latest results into one paragraph")
+
+    p_acc.set_defaults(func=cmd_accuracy)
 
     return parser
 
