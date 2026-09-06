@@ -5,18 +5,6 @@ navigation system is built: calibrate the camera, track a rigid tool, calibrate
 its tip, express everything relative to a patient reference frame, guide to a
 target — and then **measure how accurate it actually is**.
 
-> **Status: complete (Phases 1–5).** Camera calibration, single-marker 6-DOF
-> pose, occlusion-tolerant rigid-body tool tracking, pivot (tip) calibration,
-> reference-relative navigation with target guidance, and accuracy
-> characterisation. Measured numbers are in [Results](#results); per-phase
-> acceptance steps are in [TESTING.md](TESTING.md).
-
-<!-- DEMO GIF GOES HERE
-     Suggested: ~8 s loop of `python app.py track` showing the drawn axes
-     following a marker through tilt and range, with the numeric readout
-     visible. Record with ScreenToGif / OBS, drop in docs/demo.gif, then:
-     ![Live 6-DOF tracking](docs/demo.gif)
--->
 
 ---
 
