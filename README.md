@@ -5,24 +5,12 @@ navigation system is built: calibrate the camera, track a rigid tool, calibrate
 its tip, express everything relative to a patient reference frame, guide to a
 target — and then **measure how accurate it actually is**.
 
-> **Status: complete (Phases 1–5).** Camera calibration, single-marker 6-DOF
-> pose, occlusion-tolerant rigid-body tool tracking, pivot (tip) calibration,
-> reference-relative navigation with target guidance, and accuracy
-> characterisation. Measured numbers are in [Results](#results); per-phase
-> acceptance steps are in [TESTING.md](TESTING.md).
-
-<!-- DEMO GIF GOES HERE
-     Suggested: ~8 s loop of `python app.py track` showing the drawn axes
-     following a marker through tilt and range, with the numeric readout
-     visible. Record with ScreenToGif / OBS, drop in docs/demo.gif, then:
-     ![Live 6-DOF tracking](docs/demo.gif)
--->
 
 ---
 
 ## The problem
 
-Surgical navigation answers one question continuously: **where is the
+After my work at Intellijoint Surgical I realized surgical navigation answers one question continuously: **where is the
 instrument, relative to the patient?** Optical systems answer it by watching
 retro-reflective or printed fiducials with a calibrated camera and solving for
 pose.
@@ -48,37 +36,6 @@ that underpins them, and the error budget.
                                                           │
                         known geometry ───────────────────┴─► accuracy, mm [Phase 5]
 ```
-
-### Conventions
-
-One convention, used everywhere, documented in full at the top of
-[core/transforms.py](core/transforms.py):
-
-- **`T_a_b` maps points in frame b into frame a**, so `p_a = T_a_b @ p_b`, and
-  chains cancel: `T_a_c = T_a_b @ T_b_c`.
-- An object's *pose* is the transform out of its own frame into the observer's,
-  so a marker's pose in the camera is `T_cam_marker` — and its translation is
-  literally the marker centre in camera coordinates. This is exactly what
-  `cv2.solvePnP` returns.
-- **Millimetres and degrees**, everywhere. Marker geometry is specified in mm,
-  so `solvePnP` returns translations in mm with no conversion step.
-
-### OpenCV API note
-
-The `cv2.aruco` API was restructured in **OpenCV 4.7**, and
-`estimatePoseSingleMarkers` was **removed in 4.9**. Most tutorials online still
-use the old API. This project uses the current classes throughout —
-`ArucoDetector`, `CharucoDetector`, the `(x, y)`-tuple `CharucoBoard`
-constructor, `CharucoBoard.matchImagePoints` — and does pose estimation with
-`cv2.solvePnP` over **explicit 3D object points**.
-
-That last choice is not just compliance with the new API. Explicit object points
-are what make Phase 2 a small extension rather than a rewrite: a rigid tool is
-just a longer object-point array fed to the same solver. All version-sensitive
-construction is isolated in [core/cv_compat.py](core/cv_compat.py), which fails
-with an actionable message on an old or non-contrib install.
-
----
 
 ## Quick start
 
@@ -653,25 +610,6 @@ has none of the verification, risk management or fault detection that a
 clinical navigation system requires.
 
 ---
-
-## Demo GIF
-
-A 45–60 s screen capture, recorded with [ScreenToGif](https://www.screentogif.com)
-or OBS, dropped in as `docs/demo.gif`. Shoot the terminal and the OpenCV window
-side by side so the numbers are readable. Suggested beats:
-
-| Time | Command | Show |
-|---|---|---|
-| 0–8 s | `calibrate --auto` | board moving, coverage grid filling, final RMS |
-| 8–16 s | `track` | axes on a single marker, tilt it, `rpy ≈ 0` head-on |
-| 16–26 s | `track-tool` | **cover markers with your hand** — axes stay put, amber ghost outlines hold position, `markers used` counts down |
-| 26–34 s | `pivot` | precessing the tool, orientation wheel filling into a ring, final tip + residual |
-| 34–46 s | `navigate` | **pick the camera up and move it** — `tip in CAM` scrolling while `tip in REF` sits still |
-| 46–58 s | `navigate` | bring the tip to the target, distance banner counting down and flipping **green** |
-
-The two moments that sell it are the occlusion hold (16–26 s) and the camera
-move (34–46 s) — those are the ones that look like a real navigation system
-rather than a marker demo. Give each a few seconds to land.
 
 ## Requirements
 
