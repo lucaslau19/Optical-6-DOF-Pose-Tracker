@@ -146,9 +146,16 @@ def draw_navigation_readout(
     tol: TolerancesConfig,
     n_captured: int,
     last_gap_mm: float | None,
+    extra_lines: list[tuple[str, tuple[int, int, int]]] | None = None,
 ) -> None:
-    """The main panel: status, tip in both frames, and the guidance numbers."""
+    """The main panel: status, tip in both frames, and the guidance numbers.
+
+    `extra_lines` go at the bottom of the panel (`app.py stream` puts its
+    STREAM status there), so they size with it rather than floating over the
+    video where they could collide with the distance banner.
+    """
     lines: list[tuple[str, tuple[int, int, int]]] = []
+    extra = list(extra_lines or [])
 
     if not rel.is_valid:
         colour = RED
@@ -158,7 +165,7 @@ def draw_navigation_readout(
             lines.append(("  anything relative -- no fallback is possible", GREY))
         if rel.status in ("tool_lost", "both_lost"):
             lines.append(("  tool not tracked", GREY))
-        draw_text_panel(image, lines, origin=(12, 12))
+        draw_text_panel(image, lines + extra, origin=(12, 12))
         return
 
     lines.append(("NAVIGATING", GREEN))
@@ -220,7 +227,7 @@ def draw_navigation_readout(
     lines.append((f"  digitised: {n_captured}   last gap: {gap}", WHITE))
     lines.append(("d digitise | u undo | s save | q quit", WHITE))
 
-    draw_text_panel(image, lines, origin=(12, 12))
+    draw_text_panel(image, lines + extra, origin=(12, 12))
 
 
 def draw_distance_banner(

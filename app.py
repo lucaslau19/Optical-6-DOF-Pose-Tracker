@@ -9,6 +9,7 @@
     python app.py track-tool           # live rigid-body tool pose (occlusion tolerant)
     python app.py pivot                # pivot (tip) calibration -> tip offset
     python app.py navigate             # reference-relative pose + target guidance
+    python app.py stream               # navigate + send each frame to ROS 2 over UDP
     python app.py accuracy jitter      # precision: static jitter
     python app.py accuracy repeatability  # precision: repeated touches of one point
     python app.py accuracy distance    # trueness: measured vs known separations
@@ -386,6 +387,18 @@ def cmd_navigate(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# stream   (to ROS 2)
+# --------------------------------------------------------------------------
+
+
+def cmd_stream(args: argparse.Namespace) -> int:
+    from streaming.live import run_stream
+
+    cfg = _load(args)
+    return run_stream(cfg, args.dest, headless=args.headless, max_rate_hz=args.max_rate)
+
+
+# --------------------------------------------------------------------------
 # accuracy   (Phase 5)
 # --------------------------------------------------------------------------
 
@@ -521,6 +534,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="reference-relative pose, target guidance and point digitising",
     )
     p_nav.set_defaults(func=cmd_navigate)
+
+    # Standard library only, so importing it here costs nothing.
+    from streaming.sender import DEFAULT_DEST
+
+    p_stream = sub.add_parser(
+        "stream",
+        help="navigate, and send each frame's tracking result to ROS 2 as one UDP datagram",
+        description="Send each frame's tracking result as one UDP datagram (schema v1, "
+        "streaming/SCHEMA.md). Windowed mode is the navigate screen plus a STREAM line.",
+    )
+    p_stream.add_argument(
+        "--dest",
+        default=DEFAULT_DEST,
+        metavar="HOST:PORT",
+        help="where to send packets (default: %(default)s)",
+    )
+    p_stream.add_argument(
+        "--headless",
+        action="store_true",
+        help="no window: one status line per second; Ctrl+C to stop",
+    )
+    p_stream.add_argument(
+        "--max-rate",
+        type=float,
+        default=None,
+        metavar="HZ",
+        help="cap the packet rate (default: one packet per camera frame)",
+    )
+    p_stream.set_defaults(func=cmd_stream)
 
     p_acc = sub.add_parser(
         "accuracy",

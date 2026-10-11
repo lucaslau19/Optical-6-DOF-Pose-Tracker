@@ -1,0 +1,53 @@
+{
+  "v": 1,
+  "seq": 1201,
+  "t_capture_ns": 1791651600156790122,
+  "t_send_ns": 1791651600159140122,
+  "units": "mm",
+  "tool": {
+    "status": "tracking",
+    "T_cam": [
+      0.995607499,
+      0.080167159,
+      0.048362523,
+      10.153996,
+      -0.033688714,
+      0.788703171,
+      -0.613850453,
+      -106.388668,
+      -0.087354322,
+      0.609524843,
+      0.787939521,
+      357.026696,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "markers_used": [
+      10,
+      11,
+      12,
+      13
+    ],
+    "rms_px": 0.41,
+    "ambiguity": 9.87,
+    "ambiguous": false
+  },
+  "reference": {
+    "status": "lost",
+    "T_cam": null,
+    "markers_used": [],
+    "rms_px": null,
+    "ambiguity": null,
+    "ambiguous": false
+  },
+  "p_tip_tool_mm": [
+    1.25,
+    98.6,
+    -0.75
+  ],
+  "inputs": {
+    "clutch": false
+  }
+}

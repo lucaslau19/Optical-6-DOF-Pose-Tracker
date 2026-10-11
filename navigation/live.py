@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
-from calibration_pivot.tip import load_tip_if_available
+from calibration_pivot.tip import TipCalibration, load_tip_if_available
 from core.config import Config
 from core.intrinsics import CameraIntrinsics
 from core.video import camera
@@ -30,6 +32,9 @@ from tracking.overlay import (
     draw_tool_tip,
 )
 from tracking.rigid_body import RigidBodyTracker
+
+if TYPE_CHECKING:  # streaming imports this module, so no runtime import back
+    from streaming.live import FrameStreamer
 
 
 def load_reference_geometry(cfg: Config) -> ToolGeometry:
@@ -60,8 +65,32 @@ def _check_disjoint_ids(tool: ToolGeometry, reference: ToolGeometry) -> None:
         )
 
 
-def run_navigation(cfg: Config) -> None:
-    """Phase 4: report the tool relative to the patient, and guide to a target."""
+@dataclass
+class NavigationSetup:
+    """Everything that turns a camera frame into T_ref_tool and a tip.
+
+    Built by `prepare_navigation` and shared by `navigate` and `stream`, so
+    the two commands cannot disagree about what the numbers mean: the same
+    intrinsics, the same marker IDs per body, the same tip calibration.
+    """
+
+    intrinsics: CameraIntrinsics
+    tool_geom: ToolGeometry
+    ref_geom: ToolGeometry
+    tool_tracker: RigidBodyTracker
+    ref_tracker: RigidBodyTracker
+    tip: TipCalibration | None
+    tip_warning: str | None
+    p_tip: np.ndarray | None  # (3,) tool frame, mm; None without a tip calibration
+    tool_axis: np.ndarray | None
+
+
+def prepare_navigation(cfg: Config) -> NavigationSetup:
+    """Load and check everything a live navigation loop needs.
+
+    Every misconfiguration this can detect raises here, before the camera is
+    opened.
+    """
     if cfg.navigation is None:
         raise ValueError("config.yaml has no `navigation:` section -- nothing to guide to.")
 
@@ -83,6 +112,33 @@ def run_navigation(cfg: Config) -> None:
     p_tip = tip.p_tip if tip is not None else None
     tool_axis = resolve_tool_axis(cfg.navigation.tool_axis, p_tip)
 
+    return NavigationSetup(
+        intrinsics=intrinsics,
+        tool_geom=tool_geom,
+        ref_geom=ref_geom,
+        tool_tracker=tool_tracker,
+        ref_tracker=ref_tracker,
+        tip=tip,
+        tip_warning=tip_warning,
+        p_tip=p_tip,
+        tool_axis=tool_axis,
+    )
+
+
+def run_navigation(cfg: Config, stream: FrameStreamer | None = None) -> None:
+    """Phase 4: report the tool relative to the patient, and guide to a target.
+
+    With `stream`, each frame's tracking result is also published and a
+    STREAM line is added to the HUD (`app.py stream`). Without it, this is
+    exactly `app.py navigate`.
+    """
+    setup = prepare_navigation(cfg)
+    intrinsics = setup.intrinsics
+    tool_geom, ref_geom = setup.tool_geom, setup.ref_geom
+    tool_tracker, ref_tracker = setup.tool_tracker, setup.ref_tracker
+    tip, tip_warning = setup.tip, setup.tip_warning
+    p_tip, tool_axis = setup.p_tip, setup.tool_axis
+
     print(_instructions(cfg, tool_geom, ref_geom, tip, tip_warning, tool_axis))
 
     log = PointLog()
@@ -95,12 +151,19 @@ def run_navigation(cfg: Config) -> None:
     ) as cap:
         while True:
             ok, frame = cap.read()
+            # Stamped before any processing, so a streamed packet's capture
+            # time is when the frame arrived, not when tracking finished.
+            t_capture_ns = time.time_ns()
             if not ok or frame is None:
                 print("Camera read failed; stopping.")
                 break
 
             tool = tool_tracker.process(frame)
             reference = ref_tracker.process(frame)
+            if stream is not None:
+                # Before any drawing, to keep capture-to-send latency to the
+                # tracking time alone.
+                stream.publish(t_capture_ns, tool, reference, p_tip)
             rel = compute_relative_pose(tool, reference, p_tip)
 
             guidance = None
@@ -140,6 +203,7 @@ def run_navigation(cfg: Config) -> None:
             draw_navigation_readout(
                 display, rel, guidance, cfg.navigation, cfg.tolerances,
                 len(log.points), log.last_gap_mm,
+                extra_lines=[stream.hud_line()] if stream is not None else None,
             )
             draw_distance_banner(display, guidance, cfg.tolerances)
 

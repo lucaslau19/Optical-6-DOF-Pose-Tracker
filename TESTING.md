@@ -500,6 +500,107 @@ a result.
 
 ---
 
+## Streaming to ROS 2
+
+`app.py stream` sends each frame's tracking result as one UDP datagram. The
+format is a contract, [streaming/SCHEMA.md](streaming/SCHEMA.md), so most of
+this section checks that the contract holds, not just that bytes move.
+
+### Setup
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+That adds pytest; nothing else. WSL2 needs **mirrored** networking for the
+default `127.0.0.1` destination (README, "Streaming to ROS 2"). In NAT mode,
+pass `--dest <wsl-ip>:5005` instead.
+
+### ST.1 — Automated tests
+
+```powershell
+.venv\Scripts\python.exe -m pytest
+```
+
+| Check | Expected |
+|---|---|
+| Result | all pass, in about a second |
+| `test_golden_file_is_valid_and_current` | passes: the committed golden files still match what the code builds |
+
+These include the end-to-end headless test: synthetic frames go through the
+real detector and both trackers to a loopback UDP socket, and the run is then
+stopped the way Ctrl+C stops it.
+
+### ST.2 — `navigate` is unchanged
+
+```powershell
+.venv\Scripts\python.exe app.py navigate
+```
+
+Repeat P4.1 and P4.3. Everything should behave exactly as before: no STREAM
+line, same keys, same console output.
+
+The setup was moved into `prepare_navigation` so `stream` can share it. Before
+merging, the old and new loops were run on the same synthetic frames with the
+real config, intrinsics and tip file: every displayed frame was pixel-identical
+and the console output byte-identical.
+
+### ST.3 — Headless rate
+
+```powershell
+.venv\Scripts\python.exe app.py stream --headless
+.venv\Scripts\python.exe app.py stream --headless --max-rate 10
+```
+
+| Check | Expected |
+|---|---|
+| `pkt/s` | about the same as `fps` on the same line (~30) |
+| with `--max-rate 10` | `pkt/s` ≈ 10, while `fps` stays the same |
+| Cover the reference | `reference lost` within a second; uncover and it returns |
+| Ctrl+C | `Ctrl+C -- stopping.`, then the stream summary; running again works immediately (the camera was released) |
+| Summary `largest datagram` | under 1024 bytes (~700) |
+
+### ST.4 — Packets arrive in WSL
+
+In WSL:
+
+```bash
+python3 "/mnt/c/Projects/Optical 6-DOF pose tracker/scripts/udp_listen.py"
+```
+
+On Windows, `app.py stream` (windowed):
+
+| Check | Expected |
+|---|---|
+| Listener | ~30 pkt/s, `lost 0`, `invalid 0`, `max` ~700 B |
+| HUD | last panel line `STREAM -> 127.0.0.1:5005 \| seq N \| 30.0 pkt/s`, in green |
+| Tool held still | the listener's `tip_ref` matches `tip in REF` on the HUD |
+| Cover the reference | HUD `REFERENCE LOST`; listener `ref lost`, `tip_ref --` |
+| Stop the listener | the stream carries on, still green — UDP has no receipt, so the sender cannot tell |
+
+After 10 s the listener may print `WARNING: ... this clock runs 3.0% slow`.
+That is WSL2's clock, not the stream. It is why SCHEMA.md tells the ROS side
+never to compare the packet's timestamps with ROS time.
+
+### ST.5 — Fake stream (no camera)
+
+```powershell
+.venv\Scripts\python.exe tools\fake_stream.py
+```
+
+with the listener running in WSL.
+
+| Check | Expected |
+|---|---|
+| Listener `tip_ref` | on a circle: `√(x² + y²)` = 40.00 mm, `z` = −60.00 mm |
+| Sender | prints `reference LOST` at t = 9.5 s, 19.5 s, …, and `back` 0.5 s later |
+| Listener | `lost 0`, `invalid 0` |
+
+Measured on the development machine: 361 sent, 361 received in WSL, 0 invalid,
+0 sequence gaps, largest datagram 705 B.
+
+---
+
 ## Synthetic checks (no hardware)
 
 These run against rendered ground truth and validate the maths independently of
@@ -535,3 +636,12 @@ any printed target:
 - Rotation deviations use `atan2(sin, cos)` rather than `arccos`, which is
   ill-conditioned precisely in the sub-degree range this metric operates in
   (`arccos` returns ~1e-6° for identical matrices; `atan2` returns 0).
+- Stream packets survive an exact encode/decode round trip. `validate` rejects
+  a wrong version, missing or extra fields, NaN/inf anywhere, a `T_cam` of the
+  wrong length, a scaled, sheared or reflected rotation, and a lost body that
+  still carries a pose. The worst-case datagram is under 1 kB.
+- Streaming end to end (`tests/test_stream.py`): a synthetic square-on scene
+  drawn with the tool at (−100, 0, 450) mm is recovered at
+  (−100.3, −0.25, 450.3) mm and arrives intact over loopback UDP. The 0.25 mm is
+  the half-pixel corner convention of the rendering. Every send failing does
+  not stop tracking.

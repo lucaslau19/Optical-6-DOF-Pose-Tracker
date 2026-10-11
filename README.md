@@ -402,6 +402,12 @@ ambiguous.
 | [accuracy/jitter.py](accuracy/jitter.py), [accuracy/points.py](accuracy/points.py) | the four measurement procedures |
 | [accuracy/session.py](accuracy/session.py) | raw-sample CSV + summary YAML with recorded conditions |
 | [accuracy/headline.py](accuracy/headline.py) | aggregates the latest results into one citable paragraph |
+| [streaming/packet.py](streaming/packet.py) | the wire format: build, encode/decode, validate — standard library only |
+| [streaming/sender.py](streaming/sender.py), [streaming/live.py](streaming/live.py) | UDP sender; per-frame streaming, windowed and headless |
+| [streaming/SCHEMA.md](streaming/SCHEMA.md), [streaming/golden/](streaming/golden/) | **the contract with the ROS 2 side**, and the example packets both repos test against |
+| [tools/fake_stream.py](tools/fake_stream.py) | camera-free packet generator for developing the ROS side |
+| [scripts/udp_listen.py](scripts/udp_listen.py) | standard-library receiver and validator, run in WSL |
+| [tests/](tests/) | pytest: packet schema, sender, and the headless loop end to end |
 | [assets/](assets/) | committed print-ready ChArUco board, tool and reference sheets |
 | [tracking/live.py](tracking/live.py), [tracking/overlay.py](tracking/overlay.py) | live tracking loops and pose overlays |
 | [app.py](app.py) | CLI entry point |
@@ -455,6 +461,88 @@ without its conditions is not a result.
 accuracy — digitise landmarks with known coordinates, fit one rigid transform
 (Kabsch), and report what is left over. That residual cannot be reduced by
 choosing a better transform; it is the genuine distortion of the measurement.
+
+---
+
+## Streaming to ROS 2
+
+```powershell
+.venv\Scripts\python.exe app.py stream                    # the navigate screen, plus a STREAM line
+.venv\Scripts\python.exe app.py stream --headless         # no window, one status line a second, Ctrl+C stops
+.venv\Scripts\python.exe app.py stream --dest 127.0.0.1:5005 --max-rate 20
+.venv\Scripts\python.exe tools\fake_stream.py             # no camera: synthetic packets at 30 Hz
+```
+
+Every frame's tracking result goes out as **one UDP datagram** of JSON to a
+ROS 2 driver running in WSL2. The tracker stays the source of truth: the stream
+is one-way, so nothing ROS does can change what is measured. The wire format is
+a versioned contract, documented in [streaming/SCHEMA.md](streaming/SCHEMA.md).
+
+**It sends the measurement, not the conclusion.** Each packet carries both raw
+fits — `T_cam_tool` and `T_cam_ref`, in the camera frame and in millimetres,
+exactly as the trackers computed them — plus the calibrated tip offset. The ROS
+side composes `T_ref_tool = T_cam_ref⁻¹ · T_cam_tool` itself: the same one line
+as Phase 4. Sending the inputs means a hidden reference arrives as
+`reference.status: "lost"` with `T_cam: null`, rather than as a relative pose
+that quietly went missing. Phase 4's no-stale-fallback rule is written into
+the contract the ROS side has to honour.
+
+Design choices, and why:
+
+- **Fire-and-forget UDP.** A navigation display wants the newest pose, not
+  every pose. A late datagram is worthless, so there is no acknowledgement and
+  no retransmission. `seq` goes up by one per packet, and frames skipped by
+  `--max-rate` do not use a number, so a gap in `seq` always means a lost
+  datagram, never throttling.
+- **A send can never stop tracking.** Socket errors are counted and shown (the
+  STREAM line turns amber), never raised. The navigation screen works the same
+  with nobody listening.
+- **Sent is not delivered.** UDP gives no receipt. With nothing listening,
+  Windows still reports every send as successful. The sender's `pkt/s` is what
+  left this machine; only the receiver can confirm arrival.
+- **Every packet is validated before it leaves.** NaN and infinity are not
+  JSON, but the tracker uses both: a lost body's RMS is NaN, and the ambiguity
+  ratio is infinite when there is no planar twin. They go out as `null`. A
+  `null` ambiguity on a tracked body does **not** mean lost; only `status` says
+  that.
+- **Golden files guard the contract.** `streaming/golden/*.json` are shared
+  with the ROS repo for its parser tests, and `tests/test_packet.py` fails if a
+  code change here would alter them.
+- **Under 1 kB.** Rotation entries are rounded to 1e-9 and translations to
+  1e-6 mm before encoding. That moves the tip by under a micron, invisible
+  against webcam noise, and keeps a datagram at ~700 B instead of ~860 B.
+
+### WSL2 networking
+
+With **mirrored networking**, Windows and WSL share `127.0.0.1`, so the
+default `--dest 127.0.0.1:5005` reaches a listener in WSL directly. Turn it on
+in `%UserProfile%\.wslconfig`, then run `wsl --shutdown`:
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+Under the default NAT mode, Windows only forwards **TCP** on localhost into
+WSL, so UDP sent to `127.0.0.1` never arrives. Send to the WSL VM's address
+instead: get it with `wsl hostname -I`, then pass `--dest <that-ip>:5005`.
+
+To check the link without ROS, run the standard-library listener in WSL:
+
+```bash
+python3 /mnt/c/<path-to-repo>/scripts/udp_listen.py
+```
+
+It validates every packet against the schema, counts sequence gaps, and prints
+the tip in the reference frame, composed exactly as the ROS side must do it.
+With the tool held still, that should match `tip in REF` on the navigate HUD.
+
+**The clocks do not agree across the boundary.** On the development machine,
+WSL2's clock ran 3–4% slow relative to Windows, and the offset between the two
+wall clocks wandered by more than a second within 20 s. The packet's
+timestamps are Windows-clock values, so they must never be compared with ROS
+time; [SCHEMA.md](streaming/SCHEMA.md#clocks) gives the stamp to use instead.
+The listener measures this skew and warns about it.
 
 ---
 
@@ -589,7 +677,11 @@ rather than a marker demo. Give each a few seconds to land.
 
 Python 3.10+, `opencv-contrib-python` 4.10–4.x (contrib, not plain
 `opencv-python`), NumPy, SciPy, PyYAML. Exact tested versions are pinned in
-[requirements.txt](requirements.txt).
+[requirements.txt](requirements.txt). Streaming adds no dependencies: the
+networking and JSON are standard library.
+
+To run the tests, `pip install -r requirements-dev.txt` (it adds pytest), then
+`python -m pytest`.
 
 Print-ready targets are committed in [assets/](assets/) so you can print and try
 the project before running anything.
